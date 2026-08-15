@@ -1,9 +1,9 @@
 # Rogelio IA news
 
 Este agente se ejecuta diariamente a las 08:00 de Monterrey, Nuevo León, México mediante GitHub Actions.
-Usa exclusivamente Exa para investigar noticias de inteligencia artificial de las últimas 24 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
+Usa exclusivamente Exa para investigar noticias de inteligencia artificial de las últimas 72 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
 
-The report is titled `Global AI News — Last 24 Hours` and contains three blocks:
+The report is titled `Most relevant IA NEWS` and contains three blocks. News must be published within the exact last 72 hours:
 
 - `AI Developments`: three stories about new AI launches, developments, or capabilities.
 - `AI Finance`: three stories about AI investments, acquisitions, valuations, earnings, or financial strategy.

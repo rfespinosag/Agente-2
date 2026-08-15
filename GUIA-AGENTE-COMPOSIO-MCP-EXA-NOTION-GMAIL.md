@@ -5,7 +5,7 @@
 Construir un agente que:
 
 1. Se ejecute automáticamente todos los días desde GitHub Actions.
-2. Busque exclusivamente con Exa noticias internacionales relevantes de inteligencia artificial de las últimas 24 horas.
+2. Busque exclusivamente con Exa noticias internacionales relevantes de inteligencia artificial de las últimas 72 horas.
 3. Cree una página nueva en Notion con:
    - las noticias resumidas;
    - una tabla con los precios actuales de diez empresas líderes relacionadas con IA;
@@ -251,7 +251,7 @@ El script debe seguir este orden:
 
 Con Exa:
 
-- buscar noticias publicadas en las últimas 24 horas;
+- buscar noticias publicadas en las últimas 72 horas;
 - filtrar por relevancia internacional y actualidad;
 - seleccionar tres noticias para `Novedades IA` y tres para `Finanzas IA`;
 - conservar título, resumen, fecha y URL original.
@@ -263,7 +263,7 @@ También consultar una tabla actualizada con precio y cambio del día para estas
 Crear una página hija dentro de `NOTION_PARENT_ID` con un título fechado, por ejemplo:
 
 ```text
-Noticias globales IA de las últimas 24 hrs — 2026-08-14
+Most relevant IA NEWS — 2026-08-14
 ```
 
 Contenido recomendado:
