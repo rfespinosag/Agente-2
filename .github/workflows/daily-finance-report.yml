@@ -28,6 +28,7 @@ jobs:
           COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
           COMPOSIO_USER_ID: ${{ secrets.COMPOSIO_USER_ID }}
           NOTION_PARENT_ID: ${{ secrets.NOTION_PARENT_ID }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           GMAIL_FROM: rfeg1980@gmail.com
           GMAIL_TO: rfespinosagarcia@gmail.com
         run: python scripts/daily_report.py

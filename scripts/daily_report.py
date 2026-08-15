@@ -254,6 +254,35 @@ def stock_table_markdown(rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+async def fetch_finnhub_stock_rows(api_key: str) -> list[list[str]]:
+    """Fetch the latest price and daily change for the configured AI leaders."""
+    rows = [["Company", "Ticker", "Current price", "Daily change", "Daily change %", "Currency", "Market date/time", "Original source"]]
+    async with httpx2.AsyncClient(timeout=20.0) as client:
+        for company, ticker in TOP_AI_STOCKS:
+            response = await client.get(
+                "https://finnhub.io/api/v1/quote",
+                params={"symbol": ticker, "token": api_key},
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"Finnhub quote request failed for {ticker}: HTTP {response.status_code}")
+            quote = response.json()
+            required = (quote.get("c"), quote.get("d"), quote.get("dp"), quote.get("t"))
+            if any(value is None for value in required):
+                raise RuntimeError(f"Finnhub returned incomplete quote data for {ticker}: missing price or daily change")
+            updated = datetime.fromtimestamp(int(quote["t"]), timezone.utc)
+            rows.append([
+                company,
+                ticker,
+                f"${float(quote['c']):,.2f}",
+                f"{float(quote['d']):+,.2f}",
+                f"{float(quote['dp']):+,.2f}%",
+                "USD",
+                f"{updated:%Y-%m-%d %H:%M UTC}",
+                "https://finnhub.io/docs/api/quote",
+            ])
+    return rows
+
+
 def notion_table_rows(rows: list[list[str]]) -> list[dict[str, Any]]:
     """Build Notion API table_row blocks from parsed cells."""
     return [
@@ -301,6 +330,9 @@ async def run() -> None:
     window_end = window_end_dt.isoformat().replace("+00:00", "Z")
 
     composio = Composio(api_key=os.environ["COMPOSIO_API_KEY"])
+    finnhub_api_key = os.environ.get("FINNHUB_API_KEY", "").strip()
+    if not finnhub_api_key:
+        raise RuntimeError("FINNHUB_API_KEY is not configured in GitHub Secrets")
     session = composio.sessions.create(
         user_id=os.environ["COMPOSIO_USER_ID"],
         mcp=True,
@@ -364,10 +396,10 @@ async def run() -> None:
                     "COMPOSIO_MULTI_EXECUTE_TOOL",
                     {
                         "session_id": composio_session_id,
-                        "current_step": "RESEARCHING_AI_NEWS_AND_STOCKS",
-                        "current_step_metric": "0/3 research queries",
+                        "current_step": "RESEARCHING_AI_NEWS",
+                        "current_step_metric": "0/2 research queries",
                         "sync_response_to_workbench": False,
-                        "thought": "Retrieve fresh AI news and current stock prices using only Exa.",
+                        "thought": "Retrieve fresh AI news using only Exa; stock prices are fetched separately from Finnhub.",
                         "tools": [
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
@@ -379,35 +411,26 @@ async def run() -> None:
                                     "text": False,
                                     "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
-                            tool_call("EXA_ANSWER", exa_account, {
-                                    "model": "exa-pro",
-                                    "text": False,
-                                    "query": f"Using only Exa, provide a current market snapshot as of {window_end} UTC for exactly these ten AI-related public companies: {', '.join(f'{name} ({ticker})' for name, ticker in TOP_AI_STOCKS)}. Return only a Markdown table with columns Company, Ticker, Current price, Daily change, Currency, Market date/time, and Original source. Use the latest verifiable market price available for each ticker, do not invent values, include a direct English-language source URL in every row, and include the market date in ISO format YYYY-MM-DD. If a price is unavailable, write unavailable instead of guessing.",
-                            }),
                         ],
                     },
                 )
                 results = research.get("results", [])
-                if len(results) < 3:
+                if len(results) < 2:
                     raise RuntimeError(f"Research returned incomplete results: {research}")
                 launches_response = results[0].get("response", {})
                 finance_response = results[1].get("response", {})
-                stocks_response = results[2].get("response", {})
-                if not all(response.get("successful") for response in (launches_response, finance_response, stocks_response)):
+                if not all(response.get("successful") for response in (launches_response, finance_response)):
                     raise RuntimeError(f"Exa research failed: {research}")
                 launches = launches_response.get("data", {})
                 finance = finance_response.get("data", {})
-                stocks = stocks_response.get("data", {})
                 launches_answer = launches.get("answer", "")
                 finance_answer = finance.get("answer", "")
-                stocks_text = stocks.get("answer", "")
                 launches_text = parse_news_json(launches_answer, "AI Developments", window_start_dt, window_end_dt)
                 finance_text = parse_news_json(finance_answer, "AI Finance", window_start_dt, window_end_dt)
-                validate_stock_table(stocks_text)
-                stock_rows = parse_stock_table(stocks_text)
+                stock_rows = await fetch_finnhub_stock_rows(finnhub_api_key)
                 stock_html = stock_table_html(stock_rows)
                 stock_markdown = stock_table_markdown(stock_rows)
-                citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or []) + (stocks.get("citations", []) or [])
+                citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or [])
                 citation_lines = "\n".join(
                     f"- [{item.get('title', 'Source')}]({item.get('url')})"
                     for item in citations[:10]
