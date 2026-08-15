@@ -164,6 +164,56 @@ def html_fragment(text: str) -> str:
     return escaped.replace("\n", "<br>\n")
 
 
+def parse_stock_table(text: str) -> list[list[str]]:
+    """Parse Exa's Markdown table into rows for HTML and Notion blocks."""
+    rows: list[list[str]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or stripped.count("|") < 2:
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        if cells:
+            rows.append(cells)
+    if len(rows) < 2:
+        raise RuntimeError(f"Exa stock answer was not a readable Markdown table: {text[:800]}")
+    return rows
+
+
+def stock_table_html(rows: list[list[str]]) -> str:
+    header, *body = rows
+    output = [
+        '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:13px">',
+        "<thead><tr style=\"background:#eef2f7\">",
+    ]
+    output.extend(f"<th align=\"left\">{html.escape(cell)}</th>" for cell in header)
+    output.append("</tr></thead><tbody>")
+    for row in body:
+        output.append("<tr>")
+        output.extend(f"<td>{html_fragment(cell)}</td>" for cell in row)
+        output.append("</tr>")
+    output.append("</tbody></table>")
+    return "".join(output)
+
+
+def notion_table_rows(rows: list[list[str]]) -> list[dict[str, Any]]:
+    """Build Notion API table_row blocks from parsed cells."""
+    return [
+        {
+            "object": "block",
+            "type": "table_row",
+            "table_row": {
+                "cells": [
+                    [{"type": "text", "text": {"content": cell[:2000]}}]
+                    for cell in row
+                ]
+            },
+        }
+        for row in rows
+    ]
+
+
 async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     result = await mcp.call_tool(name, arguments)
     payload = result_json(result)
@@ -208,6 +258,7 @@ async def run() -> None:
                             {"use_case": "find the most relevant AI finance investment acquisition and business news from the last 72 hours using only Exa"},
                             {"use_case": "find current prices and daily changes for the top ten AI-related public companies using only Exa"},
                             {"use_case": "create a Notion page with a financial report and source links"},
+                            {"use_case": "append a native table and table rows to a Notion page"},
                             {"use_case": "send the report by Gmail from one address to another"},
                         ],
                     },
@@ -282,6 +333,8 @@ async def run() -> None:
                 validate_news_window(launches_text, "AI Developments", window_start_dt, window_end_dt)
                 validate_news_window(finance_text, "AI Finance", window_start_dt, window_end_dt)
                 validate_stock_table(stocks_text)
+                stock_rows = parse_stock_table(stocks_text)
+                stock_html = stock_table_html(stock_rows)
                 citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or []) + (stocks.get("citations", []) or [])
                 citation_lines = "\n".join(
                     f"- [{item.get('title', 'Source')}]({item.get('url')})"
@@ -298,7 +351,7 @@ async def run() -> None:
                     "## **AI Finance**\n\n"
                     f"{finance_text}\n\n"
                     "## **AI Leaders Stock Prices**\n\n"
-                    f"{stocks_text}\n\n"
+                    "The stock snapshot is inserted as a native Notion table below.\n\n"
                     "### Sources searched through Exa\n\n"
                     f"{citation_lines}\n\n"
                     f"_Search performed exclusively with Exa and restricted to the exact last-72-hour window._"
@@ -326,9 +379,62 @@ async def run() -> None:
                 page = notion_response.get("data", {})
                 page_url = find_value(page, {"url", "public_url"})
                 page_id = find_value(page, {"id", "page_id"})
-                if not page_id and not page_url:
-                    raise RuntimeError(f"Notion returned no page id or URL: {notion_result}")
+                if not page_id:
+                    raise RuntimeError(f"Notion returned no page id needed for the native stock table: {notion_result}")
                 page_url = page_url or "(URL unavailable)"
+
+                notion_table_result = await meta_call(
+                    mcp,
+                    "COMPOSIO_MULTI_EXECUTE_TOOL",
+                    {
+                        "session_id": composio_session_id,
+                        "current_step": "ADDING_NOTION_STOCK_TABLE",
+                        "current_step_metric": "0/1 tables",
+                        "sync_response_to_workbench": False,
+                        "thought": "Add the stock snapshot as a native Notion table for readability.",
+                        "tools": [tool_call(
+                            "NOTION_APPEND_BLOCK_CHILDREN",
+                            notion_account,
+                            {"block_id": page_id, "children": [
+                                {
+                                    "object": "block",
+                                    "type": "table",
+                                    "table": {
+                                        "table_width": len(stock_rows[0]),
+                                        "has_column_header": True,
+                                        "has_row_header": False,
+                                    },
+                                }
+                            ]},
+                        )],
+                    },
+                )
+                table_response = notion_table_result.get("results", [{}])[0].get("response", {})
+                if not table_response.get("successful"):
+                    raise RuntimeError(f"Notion table creation failed: {notion_table_result}")
+                table_block_id = find_value(table_response.get("data", {}), {"id", "block_id"})
+                if not table_block_id:
+                    raise RuntimeError(f"Notion table creation returned no block id: {notion_table_result}")
+
+                notion_rows_result = await meta_call(
+                    mcp,
+                    "COMPOSIO_MULTI_EXECUTE_TOOL",
+                    {
+                        "session_id": composio_session_id,
+                        "current_step": "FILLING_NOTION_STOCK_TABLE",
+                        "current_step_metric": f"0/{len(stock_rows)} rows",
+                        "sync_response_to_workbench": False,
+                        "thought": "Fill the native Notion stock table with the verified Exa values.",
+                        "tools": [tool_call(
+                            "NOTION_APPEND_BLOCK_CHILDREN",
+                            notion_account,
+                            {"block_id": table_block_id, "children": notion_table_rows(stock_rows)},
+                        )],
+                    },
+                )
+                rows_response = notion_rows_result.get("results", [{}])[0].get("response", {})
+                if not rows_response.get("successful"):
+                    raise RuntimeError(f"Notion table rows failed: {notion_rows_result}")
 
                 email_body = (
                     "Most relevant IA NEWS\n\n"
@@ -339,7 +445,7 @@ async def run() -> None:
                     "**BLOCK 2 — AI FINANCE**\n\n"
                     f"{finance_text}\n\n"
                     "**BLOCK 3 — AI LEADERS STOCK PRICES**\n\n"
-                    f"{stocks_text}\n\n"
+                    "See the formatted table below.\n\n"
                     "Sources searched through Exa:\n"
                     f"{citation_lines}"
                 )
@@ -352,7 +458,7 @@ async def run() -> None:
                     "<h2><strong>BLOCK 2 — AI FINANCE</strong></h2>"
                     f"<p>{html_fragment(finance_text)}</p>"
                     "<h2><strong>BLOCK 3 — AI LEADERS STOCK PRICES</strong></h2>"
-                    f"<pre>{html.escape(stocks_text)}</pre>"
+                    f"{stock_html}"
                     "<p><strong>Sources searched through Exa:</strong><br>"
                     f"{html_fragment(citation_lines)}</p>"
                 )
