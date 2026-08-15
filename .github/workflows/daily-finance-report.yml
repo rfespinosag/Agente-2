@@ -2,8 +2,8 @@ name: Rogelio IA news
 
 on:
   schedule:
-    # 08:00 America/Monterrey (UTC-6), same UTC offset as Mexico City.
-    - cron: "0 14 * * *"
+    # 07:30 America/Monterrey (UTC-6), same UTC offset as Mexico City.
+    - cron: "30 13 * * *"
   workflow_dispatch:
 
 permissions:
