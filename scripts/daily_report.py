@@ -71,7 +71,7 @@ def active_account(statuses: list[dict[str, Any]], toolkit: str) -> str:
     for item in statuses:
         if item.get("toolkit", "").lower() == toolkit.lower():
             for account in item.get("accounts", []) or []:
-                if account.get("status") == "ACTIVE" and account.get("id"):
+                if str(account.get("status", "")).upper() == "ACTIVE" and account.get("id"):
                     return account["id"]
     raise RuntimeError(f"No active Composio account found for {toolkit}")
 
@@ -125,6 +125,23 @@ async def run() -> None:
                 if not composio_session_id:
                     raise RuntimeError(f"Composio search returned no session id: {search}")
                 statuses = search.get("toolkit_connection_statuses", [])
+                print(
+                    "[MCP] connections="
+                    + json.dumps(
+                        [
+                            {
+                                "toolkit": item.get("toolkit"),
+                                "has_active_connection": item.get("has_active_connection"),
+                                "accounts": [
+                                    {"id": account.get("id"), "status": account.get("status")}
+                                    for account in item.get("accounts", []) or []
+                                ],
+                            }
+                            for item in statuses
+                        ],
+                        ensure_ascii=False,
+                    )
+                )
                 exa_account = active_account(statuses, "exa")
                 notion_account = active_account(statuses, "notion")
                 gmail_account = active_account(statuses, "gmail")
