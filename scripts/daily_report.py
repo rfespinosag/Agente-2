@@ -38,6 +38,11 @@ def text_from_result(result: Any) -> str:
 
 
 def as_json(result: Any) -> dict[str, Any]:
+    if getattr(result, "isError", False):
+        raise RuntimeError(text_from_result(result))
+    structured = getattr(result, "structuredContent", None)
+    if structured:
+        return structured
     raw = text_from_result(result)
     try:
         return json.loads(raw)
@@ -69,31 +74,31 @@ async def run() -> None:
                 await mcp.initialize()
 
                 rate_result = await mcp.call_tool(
-                "EXA_ANSWER",
-                {
-                    "model": "exa-pro",
-                    "text": False,
-                    "query": (
-                        f"As of {now:%Y-%m-%d %H:%M} America/Mexico_City, give the latest USD to MXN "
-                        "exchange rate, timestamp, and authoritative source URL. Prefer Banco de México "
-                        "or a recognized financial data source."
-                    ),
-                },
-            )
+                    "EXA_ANSWER",
+                    {
+                        "model": "exa-pro",
+                        "text": False,
+                        "query": (
+                            f"As of {now:%Y-%m-%d %H:%M} America/Mexico_City, give the latest USD to MXN "
+                            "exchange rate, timestamp, and authoritative source URL. Prefer Banco de México "
+                            "or a recognized financial data source."
+                        ),
+                    },
+                )
                 news_result = await mcp.call_tool(
-                "EXA_ANSWER",
-                {
-                    "model": "exa-pro",
-                    "text": False,
-                    "query": (
-                        f"Identify exactly three relevant international financial news stories published "
-                        f"between {window_start} and {window_end} UTC about major technology companies "
-                        "or the technology sector. For each, provide headline, publication timestamp, "
-                        "concise factual summary, financial relevance, and original source URL. "
-                        "Prefer authoritative sources, exclude duplicates, and do not invent dates."
-                    ),
-                },
-            )
+                    "EXA_ANSWER",
+                    {
+                        "model": "exa-pro",
+                        "text": False,
+                        "query": (
+                            f"Identify exactly three relevant international financial news stories published "
+                            f"between {window_start} and {window_end} UTC about major technology companies "
+                            "or the technology sector. For each, provide headline, publication timestamp, "
+                            "concise factual summary, financial relevance, and original source URL. "
+                            "Prefer authoritative sources, exclude duplicates, and do not invent dates."
+                        ),
+                    },
+                )
 
                 rate = as_json(rate_result)
                 news = as_json(news_result)
@@ -108,40 +113,41 @@ async def run() -> None:
 
                 title = f"Reporte financiero y tecnológico — {now:%d %B %Y}"
                 markdown = (
-                f"# {title}\n\n"
-                "## Tipo de cambio USD → MXN\n\n"
-                f"{rate_text}\n\n"
-                "## Noticias internacionales — últimas 24 horas\n\n"
-                f"{news_text}\n\n"
-                "### Fuentes originales\n\n"
-                f"{citation_lines}\n\n"
-                f"_Consulta realizada el {now:%Y-%m-%d %H:%M} America/Mexico_City._"
-            )
+                    f"# {title}\n\n"
+                    "## Tipo de cambio USD → MXN\n\n"
+                    f"{rate_text}\n\n"
+                    "## Noticias internacionales — últimas 24 horas\n\n"
+                    f"{news_text}\n\n"
+                    "### Fuentes originales\n\n"
+                    f"{citation_lines}\n\n"
+                    f"_Consulta realizada el {now:%Y-%m-%d %H:%M} America/Mexico_City._"
+                )
 
                 page_result = await mcp.call_tool(
-                "NOTION_CREATE_NOTION_PAGE",
-                {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
-            )
+                    "NOTION_CREATE_NOTION_PAGE",
+                    {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
+                )
                 page = as_json(page_result)
                 page_url = page.get("url") or page.get("public_url") or "(liga no disponible)"
 
                 email_body = (
-                f"Reporte diario — {now:%d/%m/%Y}\n\n"
-                f"{rate_text}\n\n"
-                f"{news_text}\n\n"
-                f"Reporte completo en Notion: {page_url}\n\n"
-                f"Fuentes:\n{citation_lines}"
-            )
-                await mcp.call_tool(
-                "GMAIL_SEND_EMAIL",
-                {
-                    "from_email": GMAIL_FROM,
-                    "recipient_email": GMAIL_TO,
-                    "subject": f"Reporte financiero USD/MXN y noticias tech — {now:%d/%m/%Y}",
-                    "body": email_body,
-                    "is_html": False,
-                },
-            )
+                    f"Reporte diario — {now:%d/%m/%Y}\n\n"
+                    f"{rate_text}\n\n"
+                    f"{news_text}\n\n"
+                    f"Reporte completo en Notion: {page_url}\n\n"
+                    f"Fuentes:\n{citation_lines}"
+                )
+                email_result = await mcp.call_tool(
+                    "GMAIL_SEND_EMAIL",
+                    {
+                        "from_email": GMAIL_FROM,
+                        "recipient_email": GMAIL_TO,
+                        "subject": f"Reporte financiero USD/MXN y noticias tech — {now:%d/%m/%Y}",
+                        "body": email_body,
+                        "is_html": False,
+                    },
+                )
+                as_json(email_result)
 
                 print(json.dumps({"notion_url": page_url, "sent_to": GMAIL_TO}, ensure_ascii=False))
 
