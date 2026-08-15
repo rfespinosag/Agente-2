@@ -39,7 +39,7 @@ def text_from_result(result: Any) -> str:
 
 def as_json(result: Any) -> dict[str, Any]:
     if getattr(result, "isError", False):
-        raise RuntimeError(text_from_result(result))
+        raise RuntimeError(result_preview(result))
     structured = getattr(result, "structuredContent", None)
     if structured:
         return structured
@@ -48,6 +48,36 @@ def as_json(result: Any) -> dict[str, Any]:
         return json.loads(raw)
     except json.JSONDecodeError:
         return {"text": raw}
+
+
+def result_preview(result: Any) -> str:
+    structured = getattr(result, "structuredContent", None)
+    text = " ".join(
+        value
+        for item in getattr(result, "content", []) or []
+        if (value := getattr(item, "text", None))
+    )
+    return (
+        f"isError={getattr(result, 'isError', False)}; "
+        f"structured={json.dumps(structured, ensure_ascii=False, default=str)[:1200]}; "
+        f"text={text[:1200]}"
+    )
+
+
+def find_value(value: Any, keys: set[str]) -> Any:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in keys and item:
+                return item
+            found = find_value(item, keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = find_value(item, keys)
+            if found:
+                return found
+    return None
 
 
 async def run() -> None:
@@ -72,6 +102,11 @@ async def run() -> None:
         ) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as mcp:
                 await mcp.initialize()
+                available_tools = await mcp.list_tools()
+                print(
+                    "[MCP] tools="
+                    + ",".join(tool.name for tool in available_tools.tools)
+                )
 
                 rate_result = await mcp.call_tool(
                     "EXA_ANSWER",
@@ -99,6 +134,8 @@ async def run() -> None:
                         ),
                     },
                 )
+                print(f"[MCP] EXA rate response: {result_preview(rate_result)}")
+                print(f"[MCP] EXA news response: {result_preview(news_result)}")
 
                 rate = as_json(rate_result)
                 news = as_json(news_result)
@@ -127,8 +164,16 @@ async def run() -> None:
                     "NOTION_CREATE_NOTION_PAGE",
                     {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
                 )
+                print(f"[MCP] Notion response: {result_preview(page_result)}")
                 page = as_json(page_result)
-                page_url = page.get("url") or page.get("public_url") or "(liga no disponible)"
+                page_url = find_value(page, {"url", "public_url"})
+                page_id = find_value(page, {"id", "page_id"})
+                if not page_id and not page_url:
+                    raise RuntimeError(
+                        "Notion did not return a page id or URL. "
+                        f"Response: {result_preview(page_result)}"
+                    )
+                page_url = page_url or "(liga no disponible)"
 
                 email_body = (
                     f"Reporte diario — {now:%d/%m/%Y}\n\n"
@@ -147,7 +192,14 @@ async def run() -> None:
                         "is_html": False,
                     },
                 )
-                as_json(email_result)
+                print(f"[MCP] Gmail response: {result_preview(email_result)}")
+                email = as_json(email_result)
+                email_id = find_value(email, {"id", "message_id", "threadId", "thread_id"})
+                if not email_id:
+                    raise RuntimeError(
+                        "Gmail did not return a message or thread id. "
+                        f"Response: {result_preview(email_result)}"
+                    )
 
                 print(json.dumps({"notion_url": page_url, "sent_to": GMAIL_TO}, ensure_ascii=False))
 
