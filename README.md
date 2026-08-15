@@ -1,7 +1,14 @@
-# Reporte financiero diario desde GitHub Actions
+# Rogelio IA news
 
-Este agente se ejecuta diariamente a las 08:00 de Ciudad de México mediante GitHub Actions.
-Usa Composio como servidor MCP, Exa para investigar el tipo de cambio y las noticias, Notion para publicar el reporte y Gmail para enviarlo.
+Este agente se ejecuta diariamente a las 08:00 de Monterrey, Nuevo León, México mediante GitHub Actions.
+Usa exclusivamente Exa para investigar el tipo de cambio y las noticias de las últimas 24 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
+
+El resumen se titula `Noticias globales IA de las últimas 24 hrs` y contiene dos bloques:
+
+- `Novedades IA`: tres noticias sobre lanzamientos, desarrollos o nuevas capacidades de inteligencia artificial.
+- `Finanzas IA`: tres noticias sobre inversiones, adquisiciones, valuaciones, resultados o estrategia financiera relacionada con IA.
+
+Cada noticia se solicita en español y debe terminar con un enlace a su fuente original.
 
 No usa el SDK ni la API de OpenAI.
 

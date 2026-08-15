@@ -124,7 +124,8 @@ async def run() -> None:
                         "session": {"generate_id": True},
                         "queries": [
                             {"use_case": "search Exa for the current USD MXN exchange rate"},
-                            {"use_case": "find exactly three international financial technology news stories from the last 24 hours using Exa"},
+                            {"use_case": "find the most relevant AI launch and capability news from the last 24 hours using only Exa"},
+                            {"use_case": "find the most relevant AI finance investment acquisition and business news from the last 24 hours using only Exa"},
                             {"use_case": "create a Notion page with a financial report and source links"},
                             {"use_case": "send the report by Gmail from one address to another"},
                         ],
@@ -173,39 +174,50 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Identify exactly three relevant international financial news stories published between {window_start} and {window_end} UTC about major technology companies. For each, provide headline, publication timestamp, concise factual summary, financial relevance, and original source URL. Prefer authoritative sources, exclude duplicates, and do not invent dates.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Respond exclusively in Spanish. For each story provide: title, original publication date and time, a factual 2-3 sentence summary, why it matters, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not invent dates or URLs.",
+                            }),
+                            tool_call("EXA_ANSWER", exa_account, {
+                                    "model": "exa-pro",
+                                    "text": False,
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Respond exclusively in Spanish. For each story provide: title, original publication date and time, a factual 2-3 sentence summary, the financial relevance, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not invent dates or URLs.",
                             }),
                         ],
                     },
                 )
                 results = research.get("results", [])
-                if len(results) < 2:
+                if len(results) < 3:
                     raise RuntimeError(f"Research returned incomplete results: {research}")
                 rate_response = results[0].get("response", {})
-                news_response = results[1].get("response", {})
-                if not rate_response.get("successful") or not news_response.get("successful"):
+                launches_response = results[1].get("response", {})
+                finance_response = results[2].get("response", {})
+                if not all(response.get("successful") for response in (rate_response, launches_response, finance_response)):
                     raise RuntimeError(f"Exa research failed: {research}")
                 rate = rate_response.get("data", {})
-                news = news_response.get("data", {})
+                launches = launches_response.get("data", {})
+                finance = finance_response.get("data", {})
                 rate_text = rate.get("answer", "")
-                news_text = news.get("answer", "")
-                citations = news.get("citations", [])
+                launches_text = launches.get("answer", "")
+                finance_text = finance.get("answer", "")
+                citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or [])
                 citation_lines = "\n".join(
                     f"- [{item.get('title', 'Source')}]({item.get('url')})"
-                    for item in citations[:3]
+                    for item in citations[:10]
                     if item.get("url")
                 )
 
-                title = f"Daily financial and technology report - {now:%Y-%m-%d}"
+                title = f"Noticias globales IA de las últimas 24 hrs — {now:%Y-%m-%d}"
                 markdown = (
-                    f"# {title}\n\n"
-                    "## USD to MXN exchange rate\n\n"
+                    "# Noticias globales IA de las últimas 24 hrs\n\n"
+                    f"_Reporte del {now:%Y-%m-%d} a las {now:%H:%M} en Monterrey, Nuevo León, México._\n\n"
+                    "## Tipo de cambio USD/MXN\n\n"
                     f"{rate_text}\n\n"
-                    "## International news - last 24 hours\n\n"
-                    f"{news_text}\n\n"
-                    "### Original sources\n\n"
+                    "## Novedades IA\n\n"
+                    f"{launches_text}\n\n"
+                    "## Finanzas IA\n\n"
+                    f"{finance_text}\n\n"
+                    "### Fuentes consultadas en Exa\n\n"
                     f"{citation_lines}\n\n"
-                    f"_Checked {now:%Y-%m-%d %H:%M} America/Mexico_City._"
+                    f"_La búsqueda se realizó exclusivamente con Exa y se limitó a las últimas 24 horas._"
                 )
 
                 notion_result = await meta_call(
@@ -235,8 +247,17 @@ async def run() -> None:
                 page_url = page_url or "(URL unavailable)"
 
                 email_body = (
-                    f"Daily report - {now:%Y-%m-%d}\n\n{rate_text}\n\n{news_text}\n\n"
-                    f"Full Notion report: {page_url}\n\nSources:\n{citation_lines}"
+                    "Noticias globales IA de las últimas 24 hrs\n\n"
+                    f"Reporte del {now:%Y-%m-%d} a las {now:%H:%M} en Monterrey, Nuevo León, México.\n\n"
+                    "TIPO DE CAMBIO USD/MXN\n\n"
+                    f"{rate_text}\n\n"
+                    "BLOQUE 1 — NOVEDADES IA\n\n"
+                    f"{launches_text}\n\n"
+                    "BLOQUE 2 — FINANZAS IA\n\n"
+                    f"{finance_text}\n\n"
+                    f"Reporte completo en Notion: {page_url}\n\n"
+                    "Fuentes consultadas en Exa:\n"
+                    f"{citation_lines}"
                 )
                 email_result = await meta_call(
                     mcp,
@@ -250,7 +271,7 @@ async def run() -> None:
                         "tools": [tool_call("GMAIL_SEND_EMAIL", gmail_account, {
                                 "from_email": GMAIL_FROM,
                                 "recipient_email": GMAIL_TO,
-                                "subject": f"Financial report USD/MXN and tech news - {now:%Y-%m-%d}",
+                                "subject": f"Noticias globales IA de las últimas 24 hrs — {now:%Y-%m-%d}",
                                 "body": email_body,
                                 "is_html": False,
                         })],

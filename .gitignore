@@ -3,3 +3,5 @@ API composio agente 2.txt
 .env
 .env.*
 !.env.example
+__pycache__/
+*.pyc

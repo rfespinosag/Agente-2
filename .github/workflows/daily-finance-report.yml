@@ -1,8 +1,8 @@
-name: Daily USD MXN finance report
+name: Rogelio IA news
 
 on:
   schedule:
-    # 08:00 America/Mexico_City (UTC-6).
+    # 08:00 America/Monterrey (UTC-6), same UTC offset as Mexico City.
     - cron: "0 14 * * *"
   workflow_dispatch:
 
