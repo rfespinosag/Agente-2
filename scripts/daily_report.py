@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx2
 from composio import Composio
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -56,15 +57,18 @@ async def run() -> None:
         mcp=True,
     )
 
-    async with streamable_http_client(session.mcp.url, headers=session.mcp.headers) as (
-        read_stream,
-        write_stream,
-        _,
-    ):
-        async with ClientSession(read_stream, write_stream) as mcp:
-            await mcp.initialize()
+    async with httpx2.AsyncClient(
+        headers=session.mcp.headers,
+        follow_redirects=True,
+    ) as http_client:
+        async with streamable_http_client(
+            session.mcp.url,
+            http_client=http_client,
+        ) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as mcp:
+                await mcp.initialize()
 
-            rate_result = await mcp.call_tool(
+                rate_result = await mcp.call_tool(
                 "EXA_ANSWER",
                 {
                     "model": "exa-pro",
@@ -76,7 +80,7 @@ async def run() -> None:
                     ),
                 },
             )
-            news_result = await mcp.call_tool(
+                news_result = await mcp.call_tool(
                 "EXA_ANSWER",
                 {
                     "model": "exa-pro",
@@ -91,19 +95,19 @@ async def run() -> None:
                 },
             )
 
-            rate = as_json(rate_result)
-            news = as_json(news_result)
-            rate_text = rate.get("answer") or rate.get("text", "")
-            news_text = news.get("answer") or news.get("text", "")
-            citations = news.get("citations", [])
-            citation_lines = "\n".join(
-                f"- [{item.get('title', 'Fuente')}]({item.get('url')})"
-                for item in citations[:3]
-                if item.get("url")
-            )
+                rate = as_json(rate_result)
+                news = as_json(news_result)
+                rate_text = rate.get("answer") or rate.get("text", "")
+                news_text = news.get("answer") or news.get("text", "")
+                citations = news.get("citations", [])
+                citation_lines = "\n".join(
+                    f"- [{item.get('title', 'Fuente')}]({item.get('url')})"
+                    for item in citations[:3]
+                    if item.get("url")
+                )
 
-            title = f"Reporte financiero y tecnológico — {now:%d %B %Y}"
-            markdown = (
+                title = f"Reporte financiero y tecnológico — {now:%d %B %Y}"
+                markdown = (
                 f"# {title}\n\n"
                 "## Tipo de cambio USD → MXN\n\n"
                 f"{rate_text}\n\n"
@@ -114,21 +118,21 @@ async def run() -> None:
                 f"_Consulta realizada el {now:%Y-%m-%d %H:%M} America/Mexico_City._"
             )
 
-            page_result = await mcp.call_tool(
+                page_result = await mcp.call_tool(
                 "NOTION_CREATE_NOTION_PAGE",
                 {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
             )
-            page = as_json(page_result)
-            page_url = page.get("url") or page.get("public_url") or "(liga no disponible)"
+                page = as_json(page_result)
+                page_url = page.get("url") or page.get("public_url") or "(liga no disponible)"
 
-            email_body = (
+                email_body = (
                 f"Reporte diario — {now:%d/%m/%Y}\n\n"
                 f"{rate_text}\n\n"
                 f"{news_text}\n\n"
                 f"Reporte completo en Notion: {page_url}\n\n"
                 f"Fuentes:\n{citation_lines}"
             )
-            await mcp.call_tool(
+                await mcp.call_tool(
                 "GMAIL_SEND_EMAIL",
                 {
                     "from_email": GMAIL_FROM,
@@ -139,7 +143,7 @@ async def run() -> None:
                 },
             )
 
-            print(json.dumps({"notion_url": page_url, "sent_to": GMAIL_TO}, ensure_ascii=False))
+                print(json.dumps({"notion_url": page_url, "sent_to": GMAIL_TO}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
