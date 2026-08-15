@@ -1,0 +1,5 @@
+# Local credentials and environment files
+API composio agente 2.txt
+.env
+.env.*
+!.env.example
