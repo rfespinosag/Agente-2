@@ -487,48 +487,29 @@ async def run() -> None:
                         "sync_response_to_workbench": False,
                         "thought": "Add the stock snapshot as a native Notion table for readability.",
                         "tools": [tool_call(
-                            "NOTION_APPEND_BLOCK_CHILDREN",
+                            "NOTION_APPEND_TABLE_BLOCKS",
                             notion_account,
-                            {"block_id": page_id, "children": [
-                                {
-                                    "object": "block",
-                                    "type": "table",
-                                    "table": {
-                                        "table_width": len(stock_rows[0]),
-                                        "has_column_header": True,
-                                        "has_row_header": False,
-                                    },
-                                }
-                            ]},
+                            {
+                                "block_id": page_id,
+                                "tables": [{
+                                    "table_width": len(stock_rows[0]),
+                                    "has_column_header": True,
+                                    "has_row_header": False,
+                                    "rows": [
+                                        {"cells": [
+                                            [{"type": "text", "text": {"content": cell[:2000]}}]
+                                            for cell in row
+                                        ]}
+                                        for row in stock_rows
+                                    ],
+                                }],
+                            },
                         )],
                     },
                 )
                 table_response = notion_table_result.get("results", [{}])[0].get("response", {})
                 if not table_response.get("successful"):
                     raise RuntimeError(f"Notion table creation failed: {notion_table_result}")
-                table_block_id = find_value(table_response.get("data", {}), {"id", "block_id"})
-                if not table_block_id:
-                    raise RuntimeError(f"Notion table creation returned no block id: {notion_table_result}")
-
-                notion_rows_result = await meta_call(
-                    mcp,
-                    "COMPOSIO_MULTI_EXECUTE_TOOL",
-                    {
-                        "session_id": composio_session_id,
-                        "current_step": "FILLING_NOTION_STOCK_TABLE",
-                        "current_step_metric": f"0/{len(stock_rows)} rows",
-                        "sync_response_to_workbench": False,
-                        "thought": "Fill the native Notion stock table with the verified Exa values.",
-                        "tools": [tool_call(
-                            "NOTION_APPEND_BLOCK_CHILDREN",
-                            notion_account,
-                            {"block_id": table_block_id, "children": notion_table_rows(stock_rows)},
-                        )],
-                    },
-                )
-                rows_response = notion_rows_result.get("results", [{}])[0].get("response", {})
-                if not rows_response.get("successful"):
-                    raise RuntimeError(f"Notion table rows failed: {notion_rows_result}")
 
                 email_body = (
                     "Most relevant IA NEWS\n\n"
