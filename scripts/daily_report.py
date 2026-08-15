@@ -150,6 +150,52 @@ def validate_news_window(answer: str, block_name: str, start: datetime, end: dat
         )
 
 
+def parse_news_json(answer: str, block_name: str, start: datetime, end: datetime) -> str:
+    """Validate Exa's structured news response and render it for the report."""
+    candidate = answer.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.IGNORECASE | re.DOTALL).strip()
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Exa did not return valid structured JSON for {block_name}: {answer[:800]}") from exc
+
+    stories = payload.get("stories") if isinstance(payload, dict) else None
+    if not isinstance(stories, list) or len(stories) < 3:
+        raise RuntimeError(f"Exa returned fewer than three structured {block_name} stories: {answer[:800]}")
+
+    rendered: list[str] = []
+    for index, story in enumerate(stories[:5], start=1):
+        if not isinstance(story, dict):
+            raise RuntimeError(f"Exa returned an invalid {block_name} story at position {index}")
+        title = str(story.get("title", "")).strip()
+        published_at = str(story.get("published_at", "")).strip()
+        summary = str(story.get("summary", "")).strip()
+        relevance = str(story.get("relevance", "")).strip()
+        source_url = str(story.get("source_url", "")).strip()
+        if not all((title, published_at, summary, relevance, source_url)):
+            raise RuntimeError(f"Exa returned incomplete structured {block_name} story at position {index}")
+        try:
+            published_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise RuntimeError(f"Exa returned an invalid published_at for {block_name}: {published_at}") from exc
+        if published_dt.tzinfo is None:
+            published_dt = published_dt.replace(tzinfo=timezone.utc)
+        published_dt = published_dt.astimezone(timezone.utc)
+        if not start <= published_dt <= end:
+            raise RuntimeError(f"Exa returned a {block_name} story outside the last-72-hour window: {published_at}")
+        if not re.match(r"^https?://", source_url):
+            raise RuntimeError(f"Exa returned an invalid original source URL for {block_name}: {source_url}")
+        rendered.append(
+            f"### {index}. {title}\n"
+            f"Published: {published_dt:%Y-%m-%d %H:%M UTC}\n\n"
+            f"{summary}\n\n"
+            f"{relevance}\n\n"
+            f"Original source: {source_url}"
+        )
+    return "\n\n".join(rendered)
+
+
 def validate_stock_table(answer: str) -> None:
     missing = [ticker for _, ticker in TOP_AI_STOCKS if ticker not in answer]
     if missing:
@@ -301,12 +347,12 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Write every summary and relevance explanation in English. For each story provide the original title, its publication date and time in UTC in ISO format YYYY-MM-DD HH:MM UTC, a factual 2-3 sentence summary in English, why it matters in English, and a final line exactly in the form 'Original source: https://...'. Use only verifiable original source URLs, exclude duplicates, never describe a multi-day date range instead of each article date, and do not use stories older than this exact 72-hour window. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Write every summary and financial relevance explanation in English. For each story provide the original title, its publication date and time in UTC in ISO format YYYY-MM-DD HH:MM UTC, a factual 2-3 sentence summary in English, financial relevance in English, and a final line exactly in the form 'Original source: https://...'. Use only verifiable original source URLs, exclude duplicates, never describe a multi-day date range instead of each article date, and do not use stories older than this exact 72-hour window. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
@@ -327,11 +373,11 @@ async def run() -> None:
                 launches = launches_response.get("data", {})
                 finance = finance_response.get("data", {})
                 stocks = stocks_response.get("data", {})
-                launches_text = launches.get("answer", "")
-                finance_text = finance.get("answer", "")
+                launches_answer = launches.get("answer", "")
+                finance_answer = finance.get("answer", "")
                 stocks_text = stocks.get("answer", "")
-                validate_news_window(launches_text, "AI Developments", window_start_dt, window_end_dt)
-                validate_news_window(finance_text, "AI Finance", window_start_dt, window_end_dt)
+                launches_text = parse_news_json(launches_answer, "AI Developments", window_start_dt, window_end_dt)
+                finance_text = parse_news_json(finance_answer, "AI Finance", window_start_dt, window_end_dt)
                 validate_stock_table(stocks_text)
                 stock_rows = parse_stock_table(stocks_text)
                 stock_html = stock_table_html(stock_rows)
