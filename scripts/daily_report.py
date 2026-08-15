@@ -95,41 +95,6 @@ def find_value(value: Any, keys: set[str]) -> Any:
     return None
 
 
-def discovered_tools(value: Any) -> list[dict[str, str]]:
-    """Return only safe tool identifiers from a Composio search response."""
-    found: list[dict[str, str]] = []
-    if isinstance(value, dict):
-        if value.get("tool_slug"):
-            found.append({
-                "tool_slug": str(value["tool_slug"]),
-                "description": str(value.get("description", ""))[:180],
-            })
-        for item in value.values():
-            found.extend(discovered_tools(item))
-    elif isinstance(value, list):
-        for item in value:
-            found.extend(discovered_tools(item))
-    return found
-
-
-def discovered_tool_schemas(value: Any, slugs: set[str]) -> list[dict[str, Any]]:
-    """Expose schemas for selected tools without logging unrelated search data."""
-    found: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        if value.get("tool_slug") in slugs:
-            found.append({
-                "tool_slug": value.get("tool_slug"),
-                "input_schema": value.get("input_schema"),
-                "schemaRef": value.get("schemaRef"),
-            })
-        for item in value.values():
-            found.extend(discovered_tool_schemas(item, slugs))
-    elif isinstance(value, list):
-        for item in value:
-            found.extend(discovered_tool_schemas(item, slugs))
-    return found
-
-
 def active_account(statuses: list[dict[str, Any]], toolkit: str) -> str:
     for item in statuses:
         if item.get("toolkit", "").lower() == toolkit.lower():
@@ -278,6 +243,17 @@ def stock_table_html(rows: list[list[str]]) -> str:
     return "".join(output)
 
 
+def stock_table_markdown(rows: list[list[str]]) -> str:
+    """Render the verified stock snapshot as a Notion-compatible Markdown table."""
+    header, *body = rows
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+    lines.extend("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |" for row in body)
+    return "\n".join(lines)
+
+
 def notion_table_rows(rows: list[list[str]]) -> list[dict[str, Any]]:
     """Build Notion API table_row blocks from parsed cells."""
     return [
@@ -307,6 +283,12 @@ async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) ->
             )
         else:
             details = str(error)
+        if name == "COMPOSIO_MULTI_EXECUTE_TOOL":
+            raw_details = result_text(result)
+            raw_details = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[email]", raw_details)
+            raw_details = re.sub(r"https?://\S+", "[url]", raw_details)
+            if raw_details and raw_details not in details:
+                details = f"{details} | {raw_details[:1400]}"
         raise RuntimeError(f"{name} failed: {details[:2000]}")
     return nested_data(payload)
 
@@ -352,11 +334,6 @@ async def run() -> None:
                         ],
                     },
                 )
-                print("[MCP] discovered_tools=" + json.dumps(discovered_tools(search), ensure_ascii=False))
-                print("[MCP] notion_table_schema=" + json.dumps(
-                    discovered_tool_schemas(search, {"NOTION_APPEND_TABLE_BLOCKS"}),
-                    ensure_ascii=False,
-                ))
                 composio_session_id = search.get("session", {}).get("id")
                 if not composio_session_id:
                     raise RuntimeError(f"Composio search returned no session id: {search}")
@@ -429,6 +406,7 @@ async def run() -> None:
                 validate_stock_table(stocks_text)
                 stock_rows = parse_stock_table(stocks_text)
                 stock_html = stock_table_html(stock_rows)
+                stock_markdown = stock_table_markdown(stock_rows)
                 citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or []) + (stocks.get("citations", []) or [])
                 citation_lines = "\n".join(
                     f"- [{item.get('title', 'Source')}]({item.get('url')})"
@@ -445,7 +423,7 @@ async def run() -> None:
                     "## **AI Finance**\n\n"
                     f"{finance_text}\n\n"
                     "## **AI Leaders Stock Prices**\n\n"
-                    "The stock snapshot is inserted as a native Notion table below.\n\n"
+                    f"{stock_markdown}\n\n"
                     "### Sources searched through Exa\n\n"
                     f"{citation_lines}\n\n"
                     f"_Search performed exclusively with Exa and restricted to the exact last-72-hour window._"
@@ -472,44 +450,7 @@ async def run() -> None:
                     raise RuntimeError(f"Notion create failed: {notion_result}")
                 page = notion_response.get("data", {})
                 page_url = find_value(page, {"url", "public_url"})
-                page_id = find_value(page, {"id", "page_id"})
-                if not page_id:
-                    raise RuntimeError(f"Notion returned no page id needed for the native stock table: {notion_result}")
                 page_url = page_url or "(URL unavailable)"
-
-                notion_table_result = await meta_call(
-                    mcp,
-                    "COMPOSIO_MULTI_EXECUTE_TOOL",
-                    {
-                        "session_id": composio_session_id,
-                        "current_step": "ADDING_NOTION_STOCK_TABLE",
-                        "current_step_metric": "0/1 tables",
-                        "sync_response_to_workbench": False,
-                        "thought": "Add the stock snapshot as a native Notion table for readability.",
-                        "tools": [tool_call(
-                            "NOTION_APPEND_TABLE_BLOCKS",
-                            notion_account,
-                            {
-                                "block_id": page_id,
-                                "tables": [{
-                                    "table_width": len(stock_rows[0]),
-                                    "has_column_header": True,
-                                    "has_row_header": False,
-                                    "rows": [
-                                        {"cells": [
-                                            [{"type": "text", "text": {"content": cell[:2000]}}]
-                                            for cell in row
-                                        ]}
-                                        for row in stock_rows
-                                    ],
-                                }],
-                            },
-                        )],
-                    },
-                )
-                table_response = notion_table_result.get("results", [{}])[0].get("response", {})
-                if not table_response.get("successful"):
-                    raise RuntimeError(f"Notion table creation failed: {notion_table_result}")
 
                 email_body = (
                     "Most relevant IA NEWS\n\n"
