@@ -64,7 +64,7 @@ async def run() -> None:
         async with streamable_http_client(
             session.mcp.url,
             http_client=http_client,
-        ) as (read_stream, write_stream, _):
+        ) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as mcp:
                 await mcp.initialize()
 
