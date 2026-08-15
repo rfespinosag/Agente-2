@@ -215,7 +215,7 @@ def parse_stock_table(text: str) -> list[list[str]]:
     rows: list[list[str]] = []
     for line in text.splitlines():
         stripped = line.strip()
-        if not stripped.startswith("|") or stripped.count("|") < 2:
+        if "|" not in stripped:
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
         if cells and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
