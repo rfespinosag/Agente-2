@@ -73,7 +73,16 @@ def active_account(statuses: list[dict[str, Any]], toolkit: str) -> str:
             for account in item.get("accounts", []) or []:
                 if str(account.get("status", "")).upper() == "ACTIVE" and account.get("id"):
                     return account["id"]
+            if item.get("has_active_connection"):
+                return ""
     raise RuntimeError(f"No active Composio account found for {toolkit}")
+
+
+def tool_call(tool_slug: str, account: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    call = {"tool_slug": tool_slug, "arguments": arguments}
+    if account:
+        call["account"] = account
+    return call
 
 
 async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -156,24 +165,16 @@ async def run() -> None:
                         "sync_response_to_workbench": False,
                         "thought": "Retrieve a current USD MXN rate and fresh cited technology finance news.",
                         "tools": [
-                            {
-                                "tool_slug": "EXA_ANSWER",
-                                "account": exa_account,
-                                "arguments": {
+                            tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
                                     "query": f"As of {now:%Y-%m-%d %H:%M} America/Mexico_City, give the latest USD to MXN exchange rate, timestamp, and authoritative source URL.",
-                                },
-                            },
-                            {
-                                "tool_slug": "EXA_ANSWER",
-                                "account": exa_account,
-                                "arguments": {
+                            }),
+                            tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
                                     "query": f"Identify exactly three relevant international financial news stories published between {window_start} and {window_end} UTC about major technology companies. For each, provide headline, publication timestamp, concise factual summary, financial relevance, and original source URL. Prefer authoritative sources, exclude duplicates, and do not invent dates.",
-                                },
-                            },
+                            }),
                         ],
                     },
                 )
@@ -216,11 +217,11 @@ async def run() -> None:
                         "current_step_metric": "0/1 pages",
                         "sync_response_to_workbench": False,
                         "thought": "Create the daily report in the configured Notion parent page.",
-                        "tools": [{
-                            "tool_slug": "NOTION_CREATE_NOTION_PAGE",
-                            "account": notion_account,
-                            "arguments": {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
-                        }],
+                        "tools": [tool_call(
+                            "NOTION_CREATE_NOTION_PAGE",
+                            notion_account,
+                            {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
+                        )],
                     },
                 )
                 notion_response = notion_result.get("results", [{}])[0].get("response", {})
@@ -246,17 +247,13 @@ async def run() -> None:
                         "current_step_metric": "0/1 emails",
                         "sync_response_to_workbench": False,
                         "thought": "Send the report from the configured Gmail sender to the configured recipient.",
-                        "tools": [{
-                            "tool_slug": "GMAIL_SEND_EMAIL",
-                            "account": gmail_account,
-                            "arguments": {
+                        "tools": [tool_call("GMAIL_SEND_EMAIL", gmail_account, {
                                 "from_email": GMAIL_FROM,
                                 "recipient_email": GMAIL_TO,
                                 "subject": f"Financial report USD/MXN and tech news - {now:%Y-%m-%d}",
                                 "body": email_body,
                                 "is_html": False,
-                            },
-                        }],
+                        })],
                     },
                 )
                 email_response = email_result.get("results", [{}])[0].get("response", {})
