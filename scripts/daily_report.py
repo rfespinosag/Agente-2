@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,20 @@ LOCAL_TZ = ZoneInfo("America/Mexico_City")
 PARENT_ID = os.environ["NOTION_PARENT_ID"]
 GMAIL_FROM = os.environ.get("GMAIL_FROM", "rfeg1980@gmail.com")
 GMAIL_TO = os.environ.get("GMAIL_TO", "rfespinosagarcia@gmail.com")
+SPANISH_MONTHS = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
 
 
 def result_text(result: Any) -> str:
@@ -85,6 +100,34 @@ def tool_call(tool_slug: str, account: str, arguments: dict[str, Any]) -> dict[s
     return call
 
 
+def validate_news_window(answer: str, block_name: str, start: datetime, end: datetime) -> None:
+    """Reject stale or fabricated Exa results before publishing them."""
+    if "NO_QUALIFYING_NEWS" in answer:
+        raise RuntimeError(f"Exa found no qualifying {block_name} stories in the last 24 hours")
+
+    matches = re.findall(
+        r"(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+(\d{4})(?:\s+a\s+las\s+(\d{1,2}):(\d{2}))?",
+        answer.lower(),
+    )
+    qualifying_dates = []
+    for day, month_name, year, hour, minute in matches:
+        candidate = datetime(
+            int(year),
+            SPANISH_MONTHS[month_name],
+            int(day),
+            int(hour or 0),
+            int(minute or 0),
+            tzinfo=timezone.utc,
+        )
+        if start <= candidate <= end:
+            qualifying_dates.append(candidate)
+    if len(qualifying_dates) < 3:
+        raise RuntimeError(
+            f"Exa returned fewer than three verifiable {block_name} publication dates "
+            f"inside the last-24-hour window: {answer[:800]}"
+        )
+
+
 async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     result = await mcp.call_tool(name, arguments)
     payload = result_json(result)
@@ -95,8 +138,10 @@ async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) ->
 
 async def run() -> None:
     now = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
-    window_start = (now.astimezone(timezone.utc).timestamp() - 24 * 60 * 60)
-    window_end = now.astimezone(timezone.utc).timestamp()
+    window_start_dt = now.astimezone(timezone.utc).replace(microsecond=0) - timedelta(hours=24)
+    window_end_dt = now.astimezone(timezone.utc).replace(microsecond=0)
+    window_start = window_start_dt.isoformat().replace("+00:00", "Z")
+    window_end = window_end_dt.isoformat().replace("+00:00", "Z")
 
     composio = Composio(api_key=os.environ["COMPOSIO_API_KEY"])
     session = composio.sessions.create(
@@ -168,12 +213,12 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Respond exclusively in Spanish. For each story provide: title, original publication date and time, a factual 2-3 sentence summary, why it matters, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not invent dates or URLs.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} (UTC) about new artificial intelligence launches, new AI developments, or new AI capabilities. Respond exclusively in Spanish. For each story provide: title, original publication date and time in UTC, a factual 2-3 sentence summary, why it matters, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not use older stories as substitutes. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Respond exclusively in Spanish. For each story provide: title, original publication date and time, a factual 2-3 sentence summary, the financial relevance, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not invent dates or URLs.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} (UTC) about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Respond exclusively in Spanish. For each story provide: title, original publication date and time in UTC, a factual 2-3 sentence summary, the financial relevance, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not use older stories as substitutes. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
                             }),
                         ],
                     },
@@ -189,6 +234,8 @@ async def run() -> None:
                 finance = finance_response.get("data", {})
                 launches_text = launches.get("answer", "")
                 finance_text = finance.get("answer", "")
+                validate_news_window(launches_text, "Novedades IA", window_start_dt, window_end_dt)
+                validate_news_window(finance_text, "Finanzas IA", window_start_dt, window_end_dt)
                 citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or [])
                 citation_lines = "\n".join(
                     f"- [{item.get('title', 'Source')}]({item.get('url')})"
