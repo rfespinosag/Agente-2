@@ -1,7 +1,7 @@
 # Rogelio IA news
 
 Este agente se ejecuta diariamente a las 08:00 de Monterrey, Nuevo León, México mediante GitHub Actions.
-Usa exclusivamente Exa para investigar el tipo de cambio y las noticias de las últimas 24 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
+Usa exclusivamente Exa para investigar noticias de inteligencia artificial de las últimas 24 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
 
 El resumen se titula `Noticias globales IA de las últimas 24 hrs` y contiene dos bloques:
 

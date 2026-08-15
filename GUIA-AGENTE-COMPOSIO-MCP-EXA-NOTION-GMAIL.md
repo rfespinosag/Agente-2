@@ -5,12 +5,9 @@
 Construir un agente que:
 
 1. Se ejecute automáticamente todos los días desde GitHub Actions.
-2. Consulte con Exa el tipo de cambio USD/MXN.
-3. Busque tres noticias internacionales relevantes de las últimas 24 horas sobre temas financieros relacionados con grandes empresas tecnológicas.
+2. Busque exclusivamente con Exa noticias internacionales relevantes de inteligencia artificial de las últimas 24 horas.
 4. Cree una página nueva en Notion con:
-   - el tipo de cambio en la parte superior;
-   - la fuente del tipo de cambio;
-   - las tres noticias resumidas;
+   - las noticias resumidas;
    - el enlace original de cada noticia.
 5. Envíe por Gmail un resumen y el enlace de la página de Notion.
 6. Funcione sin usar la API de OpenAI ni una clave `OPENAI_API_KEY`.
@@ -235,7 +232,7 @@ El orden correcto es:
 
 1. Abrir la sesión MCP.
 2. Ejecutar `COMPOSIO_SEARCH_TOOLS` con búsquedas separadas para:
-   - investigación de tipo de cambio y noticias con Exa;
+   - investigación de noticias con Exa;
    - creación de una página en Notion;
    - envío de correo con Gmail.
 3. Guardar el `session.id` devuelto por la búsqueda.
@@ -253,8 +250,6 @@ El script debe seguir este orden:
 
 Con Exa:
 
-- obtener el USD/MXN más reciente;
-- registrar valor, fecha/hora y fuente;
 - buscar noticias publicadas en las últimas 24 horas;
 - filtrar por relevancia internacional, finanzas y gigantes tecnológicas;
 - seleccionar exactamente tres noticias;
@@ -271,11 +266,6 @@ Reporte financiero y tecnológico — 2026-08-14
 Contenido recomendado:
 
 ```text
-Tipo de cambio USD/MXN
-Valor: [valor]
-Fecha de consulta: [fecha y hora]
-Fuente: [fuente y URL]
-
 Noticias internacionales
 
 1. [Título]
@@ -297,7 +287,6 @@ Enviar el correo solamente después de confirmar que Notion devolvió un ID de p
 
 El correo debe incluir:
 
-- tipo de cambio;
 - fecha de consulta;
 - titulares de las tres noticias;
 - resúmenes breves;

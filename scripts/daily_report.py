@@ -123,7 +123,6 @@ async def run() -> None:
                     {
                         "session": {"generate_id": True},
                         "queries": [
-                            {"use_case": "search Exa for the current USD MXN exchange rate"},
                             {"use_case": "find the most relevant AI launch and capability news from the last 24 hours using only Exa"},
                             {"use_case": "find the most relevant AI finance investment acquisition and business news from the last 24 hours using only Exa"},
                             {"use_case": "create a Notion page with a financial report and source links"},
@@ -164,13 +163,8 @@ async def run() -> None:
                         "current_step": "RESEARCHING_RATE_AND_NEWS",
                         "current_step_metric": "0/2 research queries",
                         "sync_response_to_workbench": False,
-                        "thought": "Retrieve a current USD MXN rate and fresh cited technology finance news.",
+                        "thought": "Retrieve fresh, cited AI launch and AI finance news from the last 24 hours.",
                         "tools": [
-                            tool_call("EXA_ANSWER", exa_account, {
-                                    "model": "exa-pro",
-                                    "text": False,
-                                    "query": f"As of {now:%Y-%m-%d %H:%M} America/Mexico_City, give the latest USD to MXN exchange rate, timestamp, and authoritative source URL.",
-                            }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
@@ -185,17 +179,14 @@ async def run() -> None:
                     },
                 )
                 results = research.get("results", [])
-                if len(results) < 3:
+                if len(results) < 2:
                     raise RuntimeError(f"Research returned incomplete results: {research}")
-                rate_response = results[0].get("response", {})
-                launches_response = results[1].get("response", {})
-                finance_response = results[2].get("response", {})
-                if not all(response.get("successful") for response in (rate_response, launches_response, finance_response)):
+                launches_response = results[0].get("response", {})
+                finance_response = results[1].get("response", {})
+                if not all(response.get("successful") for response in (launches_response, finance_response)):
                     raise RuntimeError(f"Exa research failed: {research}")
-                rate = rate_response.get("data", {})
                 launches = launches_response.get("data", {})
                 finance = finance_response.get("data", {})
-                rate_text = rate.get("answer", "")
                 launches_text = launches.get("answer", "")
                 finance_text = finance.get("answer", "")
                 citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or [])
@@ -209,8 +200,6 @@ async def run() -> None:
                 markdown = (
                     "# Noticias globales IA de las últimas 24 hrs\n\n"
                     f"_Reporte del {now:%Y-%m-%d} a las {now:%H:%M} en Monterrey, Nuevo León, México._\n\n"
-                    "## Tipo de cambio USD/MXN\n\n"
-                    f"{rate_text}\n\n"
                     "## Novedades IA\n\n"
                     f"{launches_text}\n\n"
                     "## Finanzas IA\n\n"
@@ -232,7 +221,7 @@ async def run() -> None:
                         "tools": [tool_call(
                             "NOTION_CREATE_NOTION_PAGE",
                             notion_account,
-                            {"parent_id": PARENT_ID, "title": title, "icon": "💱", "markdown": markdown},
+                            {"parent_id": PARENT_ID, "title": title, "icon": "📰", "markdown": markdown},
                         )],
                     },
                 )
@@ -249,8 +238,6 @@ async def run() -> None:
                 email_body = (
                     "Noticias globales IA de las últimas 24 hrs\n\n"
                     f"Reporte del {now:%Y-%m-%d} a las {now:%H:%M} en Monterrey, Nuevo León, México.\n\n"
-                    "TIPO DE CAMBIO USD/MXN\n\n"
-                    f"{rate_text}\n\n"
                     "BLOQUE 1 — NOVEDADES IA\n\n"
                     f"{launches_text}\n\n"
                     "BLOQUE 2 — FINANZAS IA\n\n"
