@@ -95,6 +95,23 @@ def find_value(value: Any, keys: set[str]) -> Any:
     return None
 
 
+def discovered_tools(value: Any) -> list[dict[str, str]]:
+    """Return only safe tool identifiers from a Composio search response."""
+    found: list[dict[str, str]] = []
+    if isinstance(value, dict):
+        if value.get("tool_slug"):
+            found.append({
+                "tool_slug": str(value["tool_slug"]),
+                "description": str(value.get("description", ""))[:180],
+            })
+        for item in value.values():
+            found.extend(discovered_tools(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(discovered_tools(item))
+    return found
+
+
 def active_account(statuses: list[dict[str, Any]], toolkit: str) -> str:
     for item in statuses:
         if item.get("toolkit", "").lower() == toolkit.lower():
@@ -317,6 +334,7 @@ async def run() -> None:
                         ],
                     },
                 )
+                print("[MCP] discovered_tools=" + json.dumps(discovered_tools(search), ensure_ascii=False))
                 composio_session_id = search.get("session", {}).get("id")
                 if not composio_session_id:
                     raise RuntimeError(f"Composio search returned no session id: {search}")
