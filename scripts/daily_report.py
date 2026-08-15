@@ -7,6 +7,7 @@ execute Exa, Notion, and Gmail tools on the connected user account.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import os
 import re
@@ -38,6 +39,18 @@ SPANISH_MONTHS = {
     "noviembre": 11,
     "diciembre": 12,
 }
+TOP_AI_STOCKS = [
+    ("NVIDIA", "NVDA"),
+    ("Microsoft", "MSFT"),
+    ("Alphabet", "GOOGL"),
+    ("Amazon", "AMZN"),
+    ("Meta Platforms", "META"),
+    ("Broadcom", "AVGO"),
+    ("AMD", "AMD"),
+    ("Oracle", "ORCL"),
+    ("Palantir", "PLTR"),
+    ("TSMC", "TSM"),
+]
 
 
 def result_text(result: Any) -> str:
@@ -121,11 +134,34 @@ def validate_news_window(answer: str, block_name: str, start: datetime, end: dat
         )
         if start <= candidate <= end:
             qualifying_dates.append(candidate)
+    for year, month, day, hour, minute in re.findall(
+        r"(20\d{2})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?",
+        answer,
+    ):
+        candidate = datetime(
+            int(year), int(month), int(day), int(hour or 0), int(minute or 0), tzinfo=timezone.utc
+        )
+        if start <= candidate <= end:
+            qualifying_dates.append(candidate)
     if len(qualifying_dates) < 3:
         raise RuntimeError(
             f"Exa returned fewer than three verifiable {block_name} publication dates "
             f"inside the last-24-hour window: {answer[:800]}"
         )
+
+
+def validate_stock_table(answer: str) -> None:
+    missing = [ticker for _, ticker in TOP_AI_STOCKS if ticker not in answer]
+    if missing:
+        raise RuntimeError(f"Exa stock table is missing tickers: {', '.join(missing)}")
+    if not re.search(r"20\d{2}-\d{2}-\d{2}", answer):
+        raise RuntimeError("Exa stock table has no explicit market date")
+
+
+def html_fragment(text: str) -> str:
+    escaped = html.escape(text)
+    escaped = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', escaped)
+    return escaped.replace("\n", "<br>\n")
 
 
 async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -170,6 +206,7 @@ async def run() -> None:
                         "queries": [
                             {"use_case": "find the most relevant AI launch and capability news from the last 24 hours using only Exa"},
                             {"use_case": "find the most relevant AI finance investment acquisition and business news from the last 24 hours using only Exa"},
+                            {"use_case": "find current prices and daily changes for the top ten AI-related public companies using only Exa"},
                             {"use_case": "create a Notion page with a financial report and source links"},
                             {"use_case": "send the report by Gmail from one address to another"},
                         ],
@@ -205,55 +242,66 @@ async def run() -> None:
                     "COMPOSIO_MULTI_EXECUTE_TOOL",
                     {
                         "session_id": composio_session_id,
-                        "current_step": "RESEARCHING_RATE_AND_NEWS",
-                        "current_step_metric": "0/2 research queries",
+                        "current_step": "RESEARCHING_AI_NEWS_AND_STOCKS",
+                        "current_step_metric": "0/3 research queries",
                         "sync_response_to_workbench": False,
-                        "thought": "Retrieve fresh, cited AI launch and AI finance news from the last 24 hours.",
+                        "thought": "Retrieve fresh AI news and current stock prices using only Exa.",
                         "tools": [
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} (UTC) about new artificial intelligence launches, new AI developments, or new AI capabilities. Respond exclusively in Spanish. For each story provide: title, original publication date and time in UTC, a factual 2-3 sentence summary, why it matters, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not use older stories as substitutes. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Write every summary and relevance explanation in English. For each story provide the original title, its publication date and time in UTC in ISO format YYYY-MM-DD HH:MM UTC, a factual 2-3 sentence summary in English, why it matters in English, and a final line exactly in the form 'Original source: https://...'. Use only verifiable original source URLs, exclude duplicates, never describe a multi-day date range instead of each article date, and do not use older stories as substitutes. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} (UTC) about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Respond exclusively in Spanish. For each story provide: title, original publication date and time in UTC, a factual 2-3 sentence summary, the financial relevance, and a final line exactly in the form 'Fuente original: https://...'. Use only verifiable original or authoritative source URLs, exclude duplicates, and do not use older stories as substitutes. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Write every summary and financial relevance explanation in English. For each story provide the original title, its publication date and time in UTC in ISO format YYYY-MM-DD HH:MM UTC, a factual 2-3 sentence summary in English, financial relevance in English, and a final line exactly in the form 'Original source: https://...'. Use only verifiable original source URLs, exclude duplicates, never describe a multi-day date range instead of each article date, and do not use older stories as substitutes. If fewer than three qualifying stories exist in that exact window, return exactly NO_QUALIFYING_NEWS.",
+                            }),
+                            tool_call("EXA_ANSWER", exa_account, {
+                                    "model": "exa-pro",
+                                    "text": False,
+                                    "query": f"Using only Exa, provide a current market snapshot as of {window_end} UTC for exactly these ten AI-related public companies: {', '.join(f'{name} ({ticker})' for name, ticker in TOP_AI_STOCKS)}. Return only a Markdown table with columns Company, Ticker, Current price, Daily change, Currency, Market date/time, and Original source. Use the latest verifiable market price available for each ticker, do not invent values, include a direct English-language source URL in every row, and include the market date in ISO format YYYY-MM-DD. If a price is unavailable, write unavailable instead of guessing.",
                             }),
                         ],
                     },
                 )
                 results = research.get("results", [])
-                if len(results) < 2:
+                if len(results) < 3:
                     raise RuntimeError(f"Research returned incomplete results: {research}")
                 launches_response = results[0].get("response", {})
                 finance_response = results[1].get("response", {})
-                if not all(response.get("successful") for response in (launches_response, finance_response)):
+                stocks_response = results[2].get("response", {})
+                if not all(response.get("successful") for response in (launches_response, finance_response, stocks_response)):
                     raise RuntimeError(f"Exa research failed: {research}")
                 launches = launches_response.get("data", {})
                 finance = finance_response.get("data", {})
+                stocks = stocks_response.get("data", {})
                 launches_text = launches.get("answer", "")
                 finance_text = finance.get("answer", "")
-                validate_news_window(launches_text, "Novedades IA", window_start_dt, window_end_dt)
-                validate_news_window(finance_text, "Finanzas IA", window_start_dt, window_end_dt)
-                citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or [])
+                stocks_text = stocks.get("answer", "")
+                validate_news_window(launches_text, "AI Developments", window_start_dt, window_end_dt)
+                validate_news_window(finance_text, "AI Finance", window_start_dt, window_end_dt)
+                validate_stock_table(stocks_text)
+                citations = (launches.get("citations", []) or []) + (finance.get("citations", []) or []) + (stocks.get("citations", []) or [])
                 citation_lines = "\n".join(
                     f"- [{item.get('title', 'Source')}]({item.get('url')})"
                     for item in citations[:10]
                     if item.get("url")
                 )
 
-                title = f"Noticias globales IA de las últimas 24 hrs — {now:%Y-%m-%d}"
+                title = f"Global AI News — Last 24 Hours — {now:%Y-%m-%d}"
                 markdown = (
-                    "# Noticias globales IA de las últimas 24 hrs\n\n"
-                    f"_Reporte del {now:%Y-%m-%d} a las {now:%H:%M} en Monterrey, Nuevo León, México._\n\n"
-                    "## Novedades IA\n\n"
+                    "# Global AI News — Last 24 Hours\n\n"
+                    f"_Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico._\n\n"
+                    "## **AI Developments**\n\n"
                     f"{launches_text}\n\n"
-                    "## Finanzas IA\n\n"
+                    "## **AI Finance**\n\n"
                     f"{finance_text}\n\n"
-                    "### Fuentes consultadas en Exa\n\n"
+                    "## **AI Leaders Stock Prices**\n\n"
+                    f"{stocks_text}\n\n"
+                    "### Sources searched through Exa\n\n"
                     f"{citation_lines}\n\n"
-                    f"_La búsqueda se realizó exclusivamente con Exa y se limitó a las últimas 24 horas._"
+                    f"_Search performed exclusively with Exa and restricted to the exact last-24-hour window._"
                 )
 
                 notion_result = await meta_call(
@@ -283,15 +331,30 @@ async def run() -> None:
                 page_url = page_url or "(URL unavailable)"
 
                 email_body = (
-                    "Noticias globales IA de las últimas 24 hrs\n\n"
-                    f"Reporte del {now:%Y-%m-%d} a las {now:%H:%M} en Monterrey, Nuevo León, México.\n\n"
-                    "BLOQUE 1 — NOVEDADES IA\n\n"
+                    "Global AI News — Last 24 Hours\n\n"
+                    f"Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico.\n\n"
+                    f"Full report in Notion: {page_url}\n\n"
+                    "**BLOCK 1 — AI DEVELOPMENTS**\n\n"
                     f"{launches_text}\n\n"
-                    "BLOQUE 2 — FINANZAS IA\n\n"
+                    "**BLOCK 2 — AI FINANCE**\n\n"
                     f"{finance_text}\n\n"
-                    f"Reporte completo en Notion: {page_url}\n\n"
-                    "Fuentes consultadas en Exa:\n"
+                    "**BLOCK 3 — AI LEADERS STOCK PRICES**\n\n"
+                    f"{stocks_text}\n\n"
+                    "Sources searched through Exa:\n"
                     f"{citation_lines}"
+                )
+                email_body_html = (
+                    "<h1>Global AI News — Last 24 Hours</h1>"
+                    f"<p>Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico.</p>"
+                    f'<p><strong><a href="{html.escape(page_url)}">Full report in Notion</a></strong></p>'
+                    "<h2><strong>BLOCK 1 — AI DEVELOPMENTS</strong></h2>"
+                    f"<p>{html_fragment(launches_text)}</p>"
+                    "<h2><strong>BLOCK 2 — AI FINANCE</strong></h2>"
+                    f"<p>{html_fragment(finance_text)}</p>"
+                    "<h2><strong>BLOCK 3 — AI LEADERS STOCK PRICES</strong></h2>"
+                    f"<pre>{html.escape(stocks_text)}</pre>"
+                    "<p><strong>Sources searched through Exa:</strong><br>"
+                    f"{html_fragment(citation_lines)}</p>"
                 )
                 email_result = await meta_call(
                     mcp,
@@ -305,9 +368,9 @@ async def run() -> None:
                         "tools": [tool_call("GMAIL_SEND_EMAIL", gmail_account, {
                                 "from_email": GMAIL_FROM,
                                 "recipient_email": GMAIL_TO,
-                                "subject": f"Noticias globales IA de las últimas 24 hrs — {now:%Y-%m-%d}",
-                                "body": email_body,
-                                "is_html": False,
+                                "subject": f"Global AI News — Last 24 Hours — {now:%Y-%m-%d}",
+                                "body": email_body_html,
+                                "is_html": True,
                         })],
                     },
                 )

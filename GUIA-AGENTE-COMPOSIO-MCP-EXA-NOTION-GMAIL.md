@@ -6,11 +6,12 @@ Construir un agente que:
 
 1. Se ejecute automáticamente todos los días desde GitHub Actions.
 2. Busque exclusivamente con Exa noticias internacionales relevantes de inteligencia artificial de las últimas 24 horas.
-4. Cree una página nueva en Notion con:
+3. Cree una página nueva en Notion con:
    - las noticias resumidas;
+   - una tabla con los precios actuales de diez empresas líderes relacionadas con IA;
    - el enlace original de cada noticia.
-5. Envíe por Gmail un resumen y el enlace de la página de Notion.
-6. Funcione sin usar la API de OpenAI ni una clave `OPENAI_API_KEY`.
+4. Envíe por Gmail un resumen y el enlace de la página de Notion.
+5. Funcione sin usar la API de OpenAI ni una clave `OPENAI_API_KEY`.
 
 La arquitectura final es:
 
@@ -251,22 +252,24 @@ El script debe seguir este orden:
 Con Exa:
 
 - buscar noticias publicadas en las últimas 24 horas;
-- filtrar por relevancia internacional, finanzas y gigantes tecnológicas;
-- seleccionar exactamente tres noticias;
+- filtrar por relevancia internacional y actualidad;
+- seleccionar tres noticias para `Novedades IA` y tres para `Finanzas IA`;
 - conservar título, resumen, fecha y URL original.
+
+También consultar una tabla actualizada con precio y cambio del día para estas diez empresas relacionadas con IA: NVIDIA (NVDA), Microsoft (MSFT), Alphabet (GOOGL), Amazon (AMZN), Meta Platforms (META), Broadcom (AVGO), AMD (AMD), Oracle (ORCL), Palantir (PLTR) y TSMC (TSM).
 
 ### Paso B: creación de Notion
 
 Crear una página hija dentro de `NOTION_PARENT_ID` con un título fechado, por ejemplo:
 
 ```text
-Reporte financiero y tecnológico — 2026-08-14
+Noticias globales IA de las últimas 24 hrs — 2026-08-14
 ```
 
 Contenido recomendado:
 
 ```text
-Noticias internacionales
+**Novedades IA**
 
 1. [Título]
 Resumen: [resumen]
@@ -279,6 +282,18 @@ Fuente original: [URL]
 3. [Título]
 Resumen: [resumen]
 Fuente original: [URL]
+
+**Finanzas IA**
+
+1. [Título]
+Resumen: [resumen]
+Fuente original: [URL]
+
+**Precios de acciones de empresas líderes en IA**
+
+| Empresa | Ticker | Precio actual | Cambio del día | Fecha de mercado | Fuente |
+|---|---|---:|---:|---|---|
+| [Empresa] | [Ticker] | [Precio] | [Cambio] | [Fecha] | [URL] |
 ```
 
 ### Paso C: envío de Gmail
@@ -288,8 +303,9 @@ Enviar el correo solamente después de confirmar que Notion devolvió un ID de p
 El correo debe incluir:
 
 - fecha de consulta;
-- titulares de las tres noticias;
+- titulares de las seis noticias;
 - resúmenes breves;
+- tabla de acciones;
 - enlaces originales;
 - enlace a la página de Notion.
 

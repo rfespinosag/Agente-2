@@ -3,12 +3,13 @@
 Este agente se ejecuta diariamente a las 08:00 de Monterrey, Nuevo León, México mediante GitHub Actions.
 Usa exclusivamente Exa para investigar noticias de inteligencia artificial de las últimas 24 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
 
-El resumen se titula `Noticias globales IA de las últimas 24 hrs` y contiene dos bloques:
+The report is titled `Global AI News — Last 24 Hours` and contains three blocks:
 
-- `Novedades IA`: tres noticias sobre lanzamientos, desarrollos o nuevas capacidades de inteligencia artificial.
-- `Finanzas IA`: tres noticias sobre inversiones, adquisiciones, valuaciones, resultados o estrategia financiera relacionada con IA.
+- `AI Developments`: three stories about new AI launches, developments, or capabilities.
+- `AI Finance`: three stories about AI investments, acquisitions, valuations, earnings, or financial strategy.
+- `AI Leaders Stock Prices`: a table with current price, daily change, market date, and source for ten companies: NVDA, MSFT, GOOGL, AMZN, META, AVGO, AMD, ORCL, PLTR, and TSM.
 
-Cada noticia se solicita en español y debe terminar con un enlace a su fuente original.
+Headlines and summaries are written in English, prioritizing original English-language sources. Each story must end with a link to its original source.
 
 No usa el SDK ni la API de OpenAI.
 
