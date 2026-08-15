@@ -264,7 +264,15 @@ async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) ->
     result = await mcp.call_tool(name, arguments)
     payload = result_json(result)
     if payload.get("error"):
-        raise RuntimeError(f"{name} failed: {payload['error']}")
+        error = payload["error"]
+        if isinstance(error, dict):
+            details = " | ".join(
+                str(error[key]) for key in ("message", "detail", "code", "status")
+                if error.get(key) is not None
+            )
+        else:
+            details = str(error)
+        raise RuntimeError(f"{name} failed: {details[:2000]}")
     return nested_data(payload)
 
 
