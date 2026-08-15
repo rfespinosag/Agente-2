@@ -256,7 +256,7 @@ def stock_table_markdown(rows: list[list[str]]) -> str:
 
 async def fetch_finnhub_stock_rows(api_key: str) -> list[list[str]]:
     """Fetch the latest price and daily change for the configured AI leaders."""
-    rows = [["Company", "Ticker", "Current price", "Daily change", "Daily change %", "Currency", "Market date/time", "Original source"]]
+    rows = [["Company", "Ticker", "Current price", "Daily change", "Daily change %", "Currency", "Market date/time"]]
     async with httpx2.AsyncClient(timeout=20.0) as client:
         for company, ticker in TOP_AI_STOCKS:
             response = await client.get(
@@ -278,7 +278,6 @@ async def fetch_finnhub_stock_rows(api_key: str) -> list[list[str]]:
                 f"{float(quote['dp']):+,.2f}%",
                 "USD",
                 f"{updated:%Y-%m-%d %H:%M UTC}",
-                "https://finnhub.io/docs/api/quote",
             ])
     return rows
 
@@ -447,6 +446,7 @@ async def run() -> None:
                     f"{finance_text}\n\n"
                     "## **AI Leaders Stock Prices**\n\n"
                     f"{stock_markdown}\n\n"
+                    "Source: [Finnhub Quote API](https://finnhub.io/docs/api/quote)\n\n"
                     "### Sources searched through Exa\n\n"
                     f"{citation_lines}\n\n"
                     f"_Search performed exclusively with Exa and restricted to the exact last-72-hour window._"
@@ -498,6 +498,7 @@ async def run() -> None:
                     f"<p>{html_fragment(finance_text)}</p>"
                     "<h2><strong>BLOCK 3 — AI LEADERS STOCK PRICES</strong></h2>"
                     f"{stock_html}"
+                    '<p>Source: <a href="https://finnhub.io/docs/api/quote">Finnhub Quote API</a></p>'
                     "<p><strong>Sources searched through Exa:</strong><br>"
                     f"{html_fragment(citation_lines)}</p>"
                 )
