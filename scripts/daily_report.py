@@ -112,6 +112,24 @@ def discovered_tools(value: Any) -> list[dict[str, str]]:
     return found
 
 
+def discovered_tool_schemas(value: Any, slugs: set[str]) -> list[dict[str, Any]]:
+    """Expose schemas for selected tools without logging unrelated search data."""
+    found: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        if value.get("tool_slug") in slugs:
+            found.append({
+                "tool_slug": value.get("tool_slug"),
+                "input_schema": value.get("input_schema"),
+                "schemaRef": value.get("schemaRef"),
+            })
+        for item in value.values():
+            found.extend(discovered_tool_schemas(item, slugs))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(discovered_tool_schemas(item, slugs))
+    return found
+
+
 def active_account(statuses: list[dict[str, Any]], toolkit: str) -> str:
     for item in statuses:
         if item.get("toolkit", "").lower() == toolkit.lower():
@@ -335,6 +353,10 @@ async def run() -> None:
                     },
                 )
                 print("[MCP] discovered_tools=" + json.dumps(discovered_tools(search), ensure_ascii=False))
+                print("[MCP] notion_table_schema=" + json.dumps(
+                    discovered_tool_schemas(search, {"NOTION_APPEND_TABLE_BLOCKS"}),
+                    ensure_ascii=False,
+                ))
                 composio_session_id = search.get("session", {}).get("id")
                 if not composio_session_id:
                     raise RuntimeError(f"Composio search returned no session id: {search}")
