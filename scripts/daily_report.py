@@ -58,6 +58,10 @@ EMAIL_RETRY_DELAY_SECONDS = 150
 NEWS_HISTORY_PATH = Path(os.environ.get("NEWS_HISTORY_PATH", ".cache/news_history.json"))
 MAX_NEWS_HISTORY_ENTRIES = 240
 MAX_PUBLICATION_FUTURE_SKEW = timedelta(minutes=10)
+MCP_MAX_ATTEMPTS = 5
+MCP_RETRY_DELAY_SECONDS = 150
+MCP_HTTP_TIMEOUT_SECONDS = 180
+MCP_CONNECT_TIMEOUT_SECONDS = 30
 
 
 def result_text(result: Any) -> str:
@@ -374,9 +378,23 @@ def notion_table_rows(rows: list[list[str]]) -> list[dict[str, Any]]:
     ]
 
 
-async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    result = await mcp.call_tool(name, arguments)
-    payload = result_json(result)
+async def meta_call(
+    mcp: ClientSession,
+    name: str,
+    arguments: dict[str, Any],
+    retry_transient: bool = False,
+) -> dict[str, Any]:
+    for attempt in range(1, MCP_MAX_ATTEMPTS + 1):
+        try:
+            result = await mcp.call_tool(name, arguments)
+            payload = result_json(result)
+            break
+        except (httpx2.TimeoutException, asyncio.TimeoutError) as exc:
+            if not retry_transient or attempt == MCP_MAX_ATTEMPTS:
+                raise
+            print(f"[MCP] {name} attempt {attempt}/{MCP_MAX_ATTEMPTS} timed out: {type(exc).__name__}")
+            print(f"[MCP] retrying in {MCP_RETRY_DELAY_SECONDS} seconds")
+            await asyncio.sleep(MCP_RETRY_DELAY_SECONDS)
     if payload.get("error"):
         error = payload["error"]
         if isinstance(error, dict):
@@ -452,6 +470,10 @@ async def run() -> None:
     async with httpx2.AsyncClient(
         headers=session.mcp.headers,
         follow_redirects=True,
+        timeout=httpx2.Timeout(
+            MCP_HTTP_TIMEOUT_SECONDS,
+            connect=MCP_CONNECT_TIMEOUT_SECONDS,
+        ),
     ) as http_client:
         async with streamable_http_client(
             session.mcp.url,
@@ -476,6 +498,7 @@ async def run() -> None:
                             {"use_case": "send the report by Gmail from one address to another"},
                         ],
                     },
+                    retry_transient=True,
                 )
                 composio_session_id = search.get("session", {}).get("id")
                 if not composio_session_id:
@@ -526,6 +549,7 @@ async def run() -> None:
                             }),
                         ],
                     },
+                    retry_transient=True,
                 )
                 results = research.get("results", [])
                 if len(results) < 2:
@@ -592,6 +616,7 @@ async def run() -> None:
                             {"parent_id": PARENT_ID, "title": title, "icon": "📰", "markdown": markdown},
                         )],
                     },
+                    retry_transient=True,
                 )
                 notion_response = notion_result.get("results", [{}])[0].get("response", {})
                 if not notion_response.get("successful"):
