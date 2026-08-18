@@ -213,7 +213,12 @@ def extract_news_entries(answer: str) -> list[dict[str, str]]:
     candidate = answer.strip()
     if candidate.startswith("```"):
         candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.IGNORECASE | re.DOTALL).strip()
-    payload = json.loads(candidate)
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Exa returned truncated or invalid JSON for {block_name}: {candidate[:500]}"
+        ) from exc
     stories = payload.get("stories", []) if isinstance(payload, dict) else []
     return [
         {
@@ -234,7 +239,12 @@ def select_new_news_answer(answer: str, history: list[dict[str, str]], block_nam
     candidate = answer.strip()
     if candidate.startswith("```"):
         candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.IGNORECASE | re.DOTALL).strip()
-    payload = json.loads(candidate)
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Exa returned truncated or invalid JSON for {block_name}: {candidate[:500]}"
+        ) from exc
     stories = payload.get("stories", []) if isinstance(payload, dict) else []
     # Historical repetition is intentional: a story may remain among the newest
     # qualifying items on a later run. Only duplicates in the current response
@@ -588,12 +598,12 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify up to eight of the newest qualifying international AI news stories. Focus on reporting published by authoritative United States sources, while covering major AI events anywhere in the world. Prioritize stories published today in America/Mexico_City, sorted newest to oldest by verified publication timestamp; if fewer than three qualifying stories are available today, use the newest qualifying stories from the fallback window between {window_start} and {window_end} UTC. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and direct original article URLs. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside the fallback 72-hour window. Exclude duplicates within this response. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify up to five of the newest qualifying international AI news stories. Focus on reporting published by authoritative United States sources, while covering major AI events anywhere in the world. Prioritize stories published today in America/Mexico_City, sorted newest to oldest by verified publication timestamp; if fewer than three qualifying stories are available today, use the newest qualifying stories from the fallback window between {window_start} and {window_end} UTC. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and direct original article URLs. {history_instruction} Return ONLY valid compact JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"Two factual sentences in English\",\"relevance\":\"Why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside the fallback 72-hour window. Exclude duplicates within this response. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify up to eight of the newest qualifying international AI finance and business stories: investments, acquisitions, funding rounds, valuations, earnings, material partnerships, or AI strategy. Focus on reporting published by authoritative United States sources, while covering major AI companies and events anywhere in the world. Prioritize stories published today in America/Mexico_City, sorted newest to oldest by verified publication timestamp; if fewer than three qualifying stories are available today, use the newest qualifying stories from the fallback window between {window_start} and {window_end} UTC. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and direct original article URLs. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside the fallback 72-hour window. Exclude duplicates within this response. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify up to five of the newest qualifying international AI finance and business stories: investments, acquisitions, funding rounds, valuations, earnings, material partnerships, or AI strategy. Focus on reporting published by authoritative United States sources, while covering major AI companies and events anywhere in the world. Prioritize stories published today in America/Mexico_City, sorted newest to oldest by verified publication timestamp; if fewer than three qualifying stories are available today, use the newest qualifying stories from the fallback window between {window_start} and {window_end} UTC. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and direct original article URLs. {history_instruction} Return ONLY valid compact JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"Two factual sentences in English\",\"relevance\":\"Financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside the fallback 72-hour window. Exclude duplicates within this response. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                         ],
                     }
@@ -634,9 +644,14 @@ async def run() -> None:
                         )
                         break
                     except RuntimeError as exc:
-                        if "fewer than three distinct" not in str(exc) or research_attempt == MCP_MAX_ATTEMPTS:
+                        error_text = str(exc)
+                        retryable_research_error = (
+                            "fewer than three distinct" in error_text
+                            or "truncated or invalid JSON" in error_text
+                        )
+                        if not retryable_research_error or research_attempt == MCP_MAX_ATTEMPTS:
                             raise
-                        print(f"[Exa] research attempt {research_attempt}/{MCP_MAX_ATTEMPTS} lacked three distinct stories")
+                        print(f"[Exa] research attempt {research_attempt}/{MCP_MAX_ATTEMPTS} returned incomplete news data")
                         print(f"[Exa] retrying in {EXA_RESEARCH_RETRY_DELAY_SECONDS} seconds")
                         await asyncio.sleep(EXA_RESEARCH_RETRY_DELAY_SECONDS)
                 stock_rows = await fetch_finnhub_stock_rows(finnhub_api_key)
