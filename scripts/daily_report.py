@@ -12,6 +12,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -54,6 +55,8 @@ TOP_AI_STOCKS = [
 EMAIL_MAX_ATTEMPTS = 5
 EMAIL_ATTEMPT_TIMEOUT_SECONDS = 180
 EMAIL_RETRY_DELAY_SECONDS = 150
+NEWS_HISTORY_PATH = Path(os.environ.get("NEWS_HISTORY_PATH", ".cache/news_history.json"))
+MAX_NEWS_HISTORY_ENTRIES = 240
 
 
 def result_text(result: Any) -> str:
@@ -197,6 +200,73 @@ def parse_news_json(answer: str, block_name: str, start: datetime, end: datetime
             f"Original source: {source_url}"
         )
     return "\n\n".join(rendered)
+
+
+def extract_news_entries(answer: str) -> list[dict[str, str]]:
+    """Extract stable title/URL keys used to prevent repeat stories."""
+    candidate = answer.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.IGNORECASE | re.DOTALL).strip()
+    payload = json.loads(candidate)
+    stories = payload.get("stories", []) if isinstance(payload, dict) else []
+    return [
+        {
+            "title": str(story.get("title", "")).strip(),
+            "source_url": str(story.get("source_url", "")).strip(),
+        }
+        for story in stories
+        if isinstance(story, dict)
+    ]
+
+
+def normalize_news_key(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def load_news_history() -> list[dict[str, str]]:
+    try:
+        payload = json.loads(NEWS_HISTORY_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return []
+    entries = payload.get("entries", []) if isinstance(payload, dict) else []
+    return entries[-MAX_NEWS_HISTORY_ENTRIES:] if isinstance(entries, list) else []
+
+
+def news_history_instruction(history: list[dict[str, str]]) -> str:
+    if not history:
+        return "There are no previously published stories available for exclusion."
+    lines = [
+        "Do not select any article whose title or source_url appears in this previous-story exclusion list:",
+        *(
+            f"- {entry.get('title', '')} — {entry.get('source_url', '')}"
+            for entry in history[-120:]
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def validate_new_news(entries: list[dict[str, str]], history: list[dict[str, str]], block_name: str) -> None:
+    known_urls = {normalize_news_key(entry.get("source_url", "")) for entry in history}
+    known_titles = {normalize_news_key(entry.get("title", "")) for entry in history}
+    for entry in entries:
+        if normalize_news_key(entry["source_url"]) in known_urls or normalize_news_key(entry["title"]) in known_titles:
+            raise RuntimeError(f"Exa returned a previously published {block_name} story: {entry['title']}")
+
+
+def save_news_history(history: list[dict[str, str]], new_entries: list[dict[str, str]]) -> None:
+    combined = history + new_entries
+    unique: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in combined:
+        key = normalize_news_key(entry.get("source_url", "")) or normalize_news_key(entry.get("title", ""))
+        if key and key not in seen:
+            seen.add(key)
+            unique.append({"title": entry.get("title", ""), "source_url": entry.get("source_url", "")})
+    NEWS_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    NEWS_HISTORY_PATH.write_text(
+        json.dumps({"entries": unique[-MAX_NEWS_HISTORY_ENTRIES:]}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def validate_stock_table(answer: str) -> None:
@@ -430,6 +500,8 @@ async def run() -> None:
                 exa_account = active_account(statuses, "exa")
                 notion_account = active_account(statuses, "notion")
                 gmail_account = active_account(statuses, "gmail")
+                news_history = load_news_history()
+                history_instruction = news_history_instruction(news_history)
 
                 research = await meta_call(
                     mcp,
@@ -444,12 +516,12 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                         ],
                     },
@@ -467,6 +539,10 @@ async def run() -> None:
                 finance_answer = finance.get("answer", "")
                 launches_text = parse_news_json(launches_answer, "AI Developments", window_start_dt, window_end_dt)
                 finance_text = parse_news_json(finance_answer, "AI Finance", window_start_dt, window_end_dt)
+                launch_entries = extract_news_entries(launches_answer)
+                finance_entries = extract_news_entries(finance_answer)
+                validate_new_news(launch_entries, news_history, "AI Developments")
+                validate_new_news(finance_entries, news_history + launch_entries, "AI Finance")
                 stock_rows = await fetch_finnhub_stock_rows(finnhub_api_key)
                 stock_html = stock_table_html(stock_rows)
                 stock_markdown = stock_table_markdown(stock_rows)
@@ -479,24 +555,20 @@ async def run() -> None:
 
                 title = f"IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}"
                 markdown = (
-                    f"# IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}\n\n"
-                    "> 🟣 **AI DAILY BRIEF**\n"
-                    "> Market intelligence, AI developments and financial signals\n\n"
+                    f"# IA daily report for Rogelio Espinosa — {now:%Y-%m-%d} {{color=\"blue\"}}\n\n"
+                    "<callout icon=\"🔷\" color=\"blue_bg\">\n**AI DAILY BRIEF**\nMarket intelligence, AI developments and financial signals\n</callout>\n\n"
                     f"_Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico._\n\n"
                     "---\n\n"
-                    "## Section 1 — AI developments\n\n"
-                    "> 🟣 **Top signal**\n"
-                    "> The most relevant AI product, model or capability developments from the last 72 hours.\n\n"
+                    "## Section 1 — AI developments {color=\"blue_bg\"}\n\n"
+                    "<callout icon=\"🔷\" color=\"blue_bg\">\n**Top signal**\nThe most relevant AI product, model or capability developments from the last 72 hours.\n</callout>\n\n"
                     f"{launches_text}\n\n"
                     "---\n\n"
-                    "## Section 2 — AI finance\n\n"
-                    "> 🟣 **Top financial signal**\n"
-                    "> The most relevant AI investments, acquisitions, earnings and business strategy signals.\n\n"
+                    "## Section 2 — AI finance {color=\"blue_bg\"}\n\n"
+                    "<callout icon=\"🔷\" color=\"blue_bg\">\n**Top financial signal**\nThe most relevant AI investments, acquisitions, earnings and business strategy signals.\n</callout>\n\n"
                     f"{finance_text}\n\n"
                     "---\n\n"
-                    "## Section 3 — AI leaders stock prices (USD)\n\n"
-                    "> 🟣 **Market snapshot**\n"
-                    "> Daily movement for the selected AI leaders, with prices shown in USD.\n\n"
+                    "## Section 3 — AI leaders stock prices (USD) {color=\"blue_bg\"}\n\n"
+                    "<callout icon=\"🔷\" color=\"blue_bg\">\n**Market snapshot**\nDaily movement for the selected AI leaders, with prices shown in USD.\n</callout>\n\n"
                     f"{stock_markdown}\n\n"
                     "Source: [Finnhub Quote API](https://finnhub.io/docs/api/quote)\n\n"
                     "### Sources searched through Exa\n\n"
@@ -542,17 +614,17 @@ async def run() -> None:
                     f"{citation_lines}"
                 )
                 email_body_html = (
-                    '<div style="border-left:6px solid #6C4AB6;padding:18px 22px;background:#F3EEFF;margin-bottom:20px">'
-                    f"<h1 style=\"color:#3D2673;margin:0 0 8px\">IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}</h1>"
-                    '<p style="margin:0;color:#6C4AB6;font-weight:bold;letter-spacing:.08em">AI DAILY BRIEF</p>'
+                    '<div style="border-left:6px solid #1F4E79;padding:18px 22px;background:#1F4E79;margin-bottom:20px">'
+                    f"<h1 style=\"color:#FFFFFF;margin:0 0 8px\">IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}</h1>"
+                    '<p style="margin:0;color:#FFFFFF;font-weight:bold;letter-spacing:.08em">AI DAILY BRIEF</p>'
                     "</div>"
                     f"<p>Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico.</p>"
                     f'<p><strong>🔗 <a href="{html.escape(page_url)}">Open full report in Notion</a></strong></p>'
-                    '<div style="border-left:6px solid #6C4AB6;padding:10px 16px;background:#F3EEFF;margin-top:20px"><h2 style="color:#3D2673;margin:0">Section 1 — AI developments</h2><p style="margin:6px 0 0;color:#6C4AB6"><strong>Top signal</strong></p></div>'
+                    '<div style="border-left:6px solid #1F4E79;padding:10px 16px;background:#1F4E79;margin-top:20px"><h2 style="color:#FFFFFF;margin:0">Section 1 — AI developments</h2><p style="margin:6px 0 0;color:#FFFFFF"><strong>Top signal</strong></p></div>'
                     f"<p>{html_fragment(launches_text)}</p>"
-                    '<div style="border-left:6px solid #6C4AB6;padding:10px 16px;background:#F3EEFF;margin-top:20px"><h2 style="color:#3D2673;margin:0">Section 2 — AI finance</h2><p style="margin:6px 0 0;color:#6C4AB6"><strong>Top financial signal</strong></p></div>'
+                    '<div style="border-left:6px solid #1F4E79;padding:10px 16px;background:#1F4E79;margin-top:20px"><h2 style="color:#FFFFFF;margin:0">Section 2 — AI finance</h2><p style="margin:6px 0 0;color:#FFFFFF"><strong>Top financial signal</strong></p></div>'
                     f"<p>{html_fragment(finance_text)}</p>"
-                    '<div style="border-left:6px solid #6C4AB6;padding:10px 16px;background:#F3EEFF;margin-top:20px"><h2 style="color:#3D2673;margin:0">Section 3 — AI leaders stock prices (USD)</h2><p style="margin:6px 0 0;color:#6C4AB6"><strong>Market snapshot</strong></p></div>'
+                    '<div style="border-left:6px solid #1F4E79;padding:10px 16px;background:#1F4E79;margin-top:20px"><h2 style="color:#FFFFFF;margin:0">Section 3 — AI leaders stock prices (USD)</h2><p style="margin:6px 0 0;color:#FFFFFF"><strong>Market snapshot</strong></p></div>'
                     f"{stock_html}"
                     '<p>Source: <a href="https://finnhub.io/docs/api/quote">Finnhub Quote API</a></p>'
                     "<p><strong>Sources searched through Exa:</strong><br>"
@@ -565,7 +637,7 @@ async def run() -> None:
                     {
                         "from_email": GMAIL_FROM,
                         "recipient_email": GMAIL_TO,
-                        "subject": f"Most relevant IA NEWS — {now:%Y-%m-%d}",
+                        "subject": f"IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}",
                         "body": email_body_html,
                         "is_html": True,
                     },
@@ -576,6 +648,8 @@ async def run() -> None:
                 email_id = find_value(email_response.get("data", {}), {"id", "message_id", "threadId", "thread_id"})
                 if not email_id:
                     raise RuntimeError(f"Gmail returned no message id: {email_result}")
+
+                save_news_history(news_history, launch_entries + finance_entries)
 
                 print(json.dumps({"notion_url": page_url, "email_id": email_id, "sent_to": GMAIL_TO}, ensure_ascii=False))
 

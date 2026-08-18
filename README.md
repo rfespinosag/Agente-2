@@ -5,7 +5,7 @@ Usa exclusivamente Exa para investigar noticias de inteligencia artificial de la
 
 El envío por Gmail tiene hasta 5 intentos. Cada intento espera como máximo 3 minutos y, si falla, espera 2 minutos y 30 segundos antes de reintentarlo. La página de Notion se crea una sola vez, antes de iniciar los reintentos de correo.
 
-The report is titled `IA daily report for Rogelio Espinosa — YYYY-MM-DD` and uses a purple AI DAILY BRIEF layout with three sections. News must be published within the exact last 72 hours:
+The report is titled `IA daily report for Rogelio Espinosa — YYYY-MM-DD` and uses a blue AI DAILY BRIEF layout with three sections. News must be published within the exact last 72 hours. Previously published article URLs and titles are stored in GitHub Actions cache and excluded from future reports:
 
 - `Section 1 — AI developments`: three stories about new AI launches, developments, or capabilities.
 - `Section 2 — AI finance`: three stories about AI investments, acquisitions, valuations, earnings, or financial strategy.
