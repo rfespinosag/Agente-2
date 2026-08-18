@@ -1,7 +1,9 @@
 # Rogelio IA news
 
-Este agente se ejecuta diariamente a las 08:00 de Monterrey, Nuevo León, México mediante GitHub Actions.
+Este agente se ejecuta diariamente a las 05:00 de Monterrey, Nuevo León, México mediante GitHub Actions.
 Usa exclusivamente Exa para investigar noticias de inteligencia artificial de las últimas 72 horas, Composio como servidor MCP, Notion para publicar el reporte y Gmail para enviarlo.
+
+El envío por Gmail tiene hasta 5 intentos. Cada intento espera como máximo 3 minutos y, si falla, espera 2 minutos y 30 segundos antes de reintentarlo. La página de Notion se crea una sola vez, antes de iniciar los reintentos de correo.
 
 The report is titled `Most relevant IA NEWS` and contains three blocks. News must be published within the exact last 72 hours:
 

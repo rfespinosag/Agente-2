@@ -51,6 +51,9 @@ TOP_AI_STOCKS = [
     ("Palantir", "PLTR"),
     ("TSMC", "TSM"),
 ]
+EMAIL_MAX_ATTEMPTS = 5
+EMAIL_ATTEMPT_TIMEOUT_SECONDS = 180
+EMAIL_RETRY_DELAY_SECONDS = 150
 
 
 def result_text(result: Any) -> str:
@@ -321,6 +324,43 @@ async def meta_call(mcp: ClientSession, name: str, arguments: dict[str, Any]) ->
     return nested_data(payload)
 
 
+async def send_email_with_retries(
+    mcp: ClientSession,
+    composio_session_id: str,
+    gmail_account: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Retry transient/timeout failures without recreating the Notion report."""
+    last_error: Exception | None = None
+    for attempt in range(1, EMAIL_MAX_ATTEMPTS + 1):
+        try:
+            print(f"[Gmail] send attempt {attempt}/{EMAIL_MAX_ATTEMPTS}")
+            return await asyncio.wait_for(
+                meta_call(
+                    mcp,
+                    "COMPOSIO_MULTI_EXECUTE_TOOL",
+                    {
+                        "session_id": composio_session_id,
+                        "current_step": "SENDING_REPORT_EMAIL",
+                        "current_step_metric": f"{attempt - 1}/{EMAIL_MAX_ATTEMPTS} emails",
+                        "sync_response_to_workbench": False,
+                        "thought": "Send the report from the configured Gmail sender to the configured recipient.",
+                        "tools": [tool_call("GMAIL_SEND_EMAIL", gmail_account, arguments)],
+                    },
+                ),
+                timeout=EMAIL_ATTEMPT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            last_error = exc
+            print(f"[Gmail] attempt {attempt} failed: {type(exc).__name__}: {exc}")
+            if attempt < EMAIL_MAX_ATTEMPTS:
+                print(f"[Gmail] retrying in {EMAIL_RETRY_DELAY_SECONDS} seconds")
+                await asyncio.sleep(EMAIL_RETRY_DELAY_SECONDS)
+    raise RuntimeError(
+        f"Gmail send failed after {EMAIL_MAX_ATTEMPTS} attempts: {last_error}"
+    ) from last_error
+
+
 async def run() -> None:
     now = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
     window_start_dt = now.astimezone(timezone.utc).replace(microsecond=0) - timedelta(hours=72)
@@ -502,22 +542,16 @@ async def run() -> None:
                     "<p><strong>Sources searched through Exa:</strong><br>"
                     f"{html_fragment(citation_lines)}</p>"
                 )
-                email_result = await meta_call(
+                email_result = await send_email_with_retries(
                     mcp,
-                    "COMPOSIO_MULTI_EXECUTE_TOOL",
+                    composio_session_id,
+                    gmail_account,
                     {
-                        "session_id": composio_session_id,
-                        "current_step": "SENDING_REPORT_EMAIL",
-                        "current_step_metric": "0/1 emails",
-                        "sync_response_to_workbench": False,
-                        "thought": "Send the report from the configured Gmail sender to the configured recipient.",
-                        "tools": [tool_call("GMAIL_SEND_EMAIL", gmail_account, {
-                                "from_email": GMAIL_FROM,
-                                "recipient_email": GMAIL_TO,
-                                "subject": f"Most relevant IA NEWS — {now:%Y-%m-%d}",
-                                "body": email_body_html,
-                                "is_html": True,
-                        })],
+                        "from_email": GMAIL_FROM,
+                        "recipient_email": GMAIL_TO,
+                        "subject": f"Most relevant IA NEWS — {now:%Y-%m-%d}",
+                        "body": email_body_html,
+                        "is_html": True,
                     },
                 )
                 email_response = email_result.get("results", [{}])[0].get("response", {})
