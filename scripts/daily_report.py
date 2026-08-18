@@ -638,7 +638,7 @@ async def run() -> None:
                     {
                         "from_email": GMAIL_FROM,
                         "recipient_email": GMAIL_TO,
-                        "subject": f"IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}",
+                        "subject": f"AI Daily Brief — {now:%Y-%m-%d}",
                         "body": email_body_html,
                         "is_html": True,
                     },
