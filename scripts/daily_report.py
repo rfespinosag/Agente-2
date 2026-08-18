@@ -60,6 +60,7 @@ MAX_NEWS_HISTORY_ENTRIES = 240
 MAX_PUBLICATION_FUTURE_SKEW = timedelta(minutes=10)
 MCP_MAX_ATTEMPTS = 5
 MCP_RETRY_DELAY_SECONDS = 150
+EXA_RESEARCH_RETRY_DELAY_SECONDS = 15
 MCP_HTTP_TIMEOUT_SECONDS = 180
 MCP_CONNECT_TIMEOUT_SECONDS = 30
 
@@ -307,7 +308,7 @@ def news_history_instruction(history: list[dict[str, str]]) -> str:
         "Do not select any article whose title or source_url appears in this previous-story exclusion list:",
         *(
             f"- {entry.get('title', '')} — {entry.get('source_url', '')}"
-            for entry in history[-120:]
+            for entry in history[-30:]
         ),
     ]
     return "\n".join(lines)
@@ -610,7 +611,21 @@ async def run() -> None:
                             }),
                         ],
                     }
+                research_queries = [
+                    tool["arguments"]["query"]
+                    for tool in research_arguments["tools"]
+                ]
+                research_focuses = [
+                    "Prioritize different companies and stories than the first attempt, especially recent product launches and model releases.",
+                    "Prioritize developer tools, open-source models, safety, robotics, chips, and enterprise AI from authoritative sources.",
+                    "Use a different set of authoritative sources and avoid the most popular stories already returned.",
+                    "Broaden the international source mix while keeping direct original article URLs and verified timestamps.",
+                    "Return the freshest qualifying stories not present in the exclusion list, with no substitutions from that list.",
+                ]
                 for research_attempt in range(1, MCP_MAX_ATTEMPTS + 1):
+                    retry_focus = research_focuses[research_attempt - 1]
+                    for tool, base_query in zip(research_arguments["tools"], research_queries):
+                        tool["arguments"]["query"] = f"{base_query} {retry_focus} This is search attempt {research_attempt} of {MCP_MAX_ATTEMPTS}."
                     research = await meta_call(
                         mcp,
                         "COMPOSIO_MULTI_EXECUTE_TOOL",
@@ -636,8 +651,8 @@ async def run() -> None:
                         if "fewer than three new" not in str(exc) or research_attempt == MCP_MAX_ATTEMPTS:
                             raise
                         print(f"[Exa] research attempt {research_attempt}/{MCP_MAX_ATTEMPTS} lacked three new stories")
-                        print(f"[Exa] retrying in {MCP_RETRY_DELAY_SECONDS} seconds")
-                        await asyncio.sleep(MCP_RETRY_DELAY_SECONDS)
+                        print(f"[Exa] retrying in {EXA_RESEARCH_RETRY_DELAY_SECONDS} seconds")
+                        await asyncio.sleep(EXA_RESEARCH_RETRY_DELAY_SECONDS)
                 stock_rows = await fetch_finnhub_stock_rows(finnhub_api_key)
                 stock_html = stock_table_html(stock_rows)
                 stock_markdown = stock_table_markdown(stock_rows)
