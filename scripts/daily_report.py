@@ -228,6 +228,40 @@ def normalize_news_key(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
+def select_new_news_answer(answer: str, history: list[dict[str, str]], block_name: str) -> str:
+    """Keep the first three candidate stories not already used in prior reports."""
+    candidate = answer.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?\s*|\s*```$", "", candidate, flags=re.IGNORECASE | re.DOTALL).strip()
+    payload = json.loads(candidate)
+    stories = payload.get("stories", []) if isinstance(payload, dict) else []
+    known_urls = {normalize_news_key(entry.get("source_url", "")) for entry in history}
+    known_titles = {normalize_news_key(entry.get("title", "")) for entry in history}
+    selected: list[dict[str, Any]] = []
+    selected_urls: set[str] = set()
+    selected_titles: set[str] = set()
+    for story in stories:
+        if not isinstance(story, dict):
+            continue
+        url_key = normalize_news_key(str(story.get("source_url", "")))
+        title_key = normalize_news_key(str(story.get("title", "")))
+        if not url_key or not title_key:
+            continue
+        if url_key in known_urls or title_key in known_titles:
+            print(f"[Exa] skipping previously published {block_name} story: {story.get('title', '')}")
+            continue
+        if url_key in selected_urls or title_key in selected_titles:
+            continue
+        selected.append(story)
+        selected_urls.add(url_key)
+        selected_titles.add(title_key)
+        if len(selected) == 3:
+            break
+    if len(selected) < 3:
+        raise RuntimeError(f"Exa returned fewer than three new {block_name} stories after duplicate filtering")
+    return json.dumps({"stories": selected}, ensure_ascii=False)
+
+
 def load_news_history() -> list[dict[str, str]]:
     try:
         payload = json.loads(NEWS_HISTORY_PATH.read_text(encoding="utf-8"))
@@ -540,12 +574,12 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify up to eight of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Return at least three candidates when available. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify up to eight of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Return at least three candidates when available. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                         ],
                     },
@@ -562,9 +596,11 @@ async def run() -> None:
                 finance = finance_response.get("data", {})
                 launches_answer = launches.get("answer", "")
                 finance_answer = finance.get("answer", "")
+                launches_answer = select_new_news_answer(launches_answer, news_history, "AI Developments")
+                launch_entries = extract_news_entries(launches_answer)
+                finance_answer = select_new_news_answer(finance_answer, news_history + launch_entries, "AI Finance")
                 launches_text = parse_news_json(launches_answer, "AI Developments", window_start_dt, window_end_dt)
                 finance_text = parse_news_json(finance_answer, "AI Finance", window_start_dt, window_end_dt)
-                launch_entries = extract_news_entries(launches_answer)
                 finance_entries = extract_news_entries(finance_answer)
                 validate_new_news(launch_entries, news_history, "AI Developments")
                 validate_new_news(finance_entries, news_history + launch_entries, "AI Finance")
