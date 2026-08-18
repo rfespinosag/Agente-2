@@ -17,6 +17,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Restore news history
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/news_history.json
+          key: news-history-${{ github.run_id }}
+          restore-keys: |
+            news-history-
+
+      - name: Prepare news history
+        run: |
+          mkdir -p .cache
+          if [ ! -f .cache/news_history.json ]; then
+            printf '{"entries":[]}' > .cache/news_history.json
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -33,3 +48,10 @@ jobs:
           GMAIL_FROM: rfeg1980@gmail.com
           GMAIL_TO: rfespinosagarcia@gmail.com
         run: python scripts/daily_report.py
+
+      - name: Save news history
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/news_history.json
+          key: news-history-${{ github.run_id }}
