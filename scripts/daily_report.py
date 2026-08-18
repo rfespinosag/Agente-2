@@ -198,7 +198,7 @@ def parse_news_json(answer: str, block_name: str, start: datetime, end: datetime
         if not re.match(r"^https?://", source_url):
             raise RuntimeError(f"Exa returned an invalid original source URL for {block_name}: {source_url}")
         rendered.append(
-            f"### {index}. {title}\n"
+            f"{index}. **{title}**\n"
             f"Published: {published_dt:%Y-%m-%d %H:%M UTC}\n\n"
             f"{summary}\n\n"
             f"{relevance}\n\n"
@@ -318,6 +318,7 @@ def validate_stock_table(answer: str) -> None:
 
 def html_fragment(text: str) -> str:
     escaped = html.escape(text)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
     escaped = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', escaped)
     return escaped.replace("\n", "<br>\n")
 
