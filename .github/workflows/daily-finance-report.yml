@@ -2,8 +2,8 @@ name: Rogelio IA news
 
 on:
   schedule:
-    # 07:30 America/Monterrey (UTC-6), same UTC offset as Mexico City.
-    - cron: "30 13 * * *"
+    # 05:00 America/Mexico_City (UTC-6). GitHub Actions cron uses UTC.
+    - cron: "0 11 * * *"
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,8 @@ permissions:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Allows the email step to make five attempts with a 150-second delay.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
