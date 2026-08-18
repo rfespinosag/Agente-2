@@ -262,6 +262,35 @@ def select_new_news_answer(answer: str, history: list[dict[str, str]], block_nam
     return json.dumps({"stories": selected}, ensure_ascii=False)
 
 
+def prepare_research_payload(
+    research: dict[str, Any],
+    history: list[dict[str, str]],
+    window_start_dt: datetime,
+    window_end_dt: datetime,
+) -> tuple[dict[str, Any], dict[str, Any], str, str, list[dict[str, str]], list[dict[str, str]]]:
+    results = research.get("results", [])
+    if len(results) < 2:
+        raise RuntimeError(f"Research returned incomplete results: {research}")
+    launches_response = results[0].get("response", {})
+    finance_response = results[1].get("response", {})
+    if not all(response.get("successful") for response in (launches_response, finance_response)):
+        raise RuntimeError(f"Exa research failed: {research}")
+    launches = launches_response.get("data", {})
+    finance = finance_response.get("data", {})
+    launches_answer = select_new_news_answer(launches.get("answer", ""), history, "AI Developments")
+    launch_entries = extract_news_entries(launches_answer)
+    finance_answer = select_new_news_answer(finance.get("answer", ""), history + launch_entries, "AI Finance")
+    finance_entries = extract_news_entries(finance_answer)
+    return (
+        launches,
+        finance,
+        parse_news_json(launches_answer, "AI Developments", window_start_dt, window_end_dt),
+        parse_news_json(finance_answer, "AI Finance", window_start_dt, window_end_dt),
+        launch_entries,
+        finance_entries,
+    )
+
+
 def load_news_history() -> list[dict[str, str]]:
     try:
         payload = json.loads(NEWS_HISTORY_PATH.read_text(encoding="utf-8"))
@@ -562,10 +591,7 @@ async def run() -> None:
                 news_history = load_news_history()
                 history_instruction = news_history_instruction(news_history)
 
-                research = await meta_call(
-                    mcp,
-                    "COMPOSIO_MULTI_EXECUTE_TOOL",
-                    {
+                research_arguments = {
                         "session_id": composio_session_id,
                         "current_step": "RESEARCHING_AI_NEWS",
                         "current_step_metric": "0/2 research queries",
@@ -583,28 +609,35 @@ async def run() -> None:
                                     "query": f"Using only Exa, identify up to eight of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Return at least three candidates when available. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                         ],
-                    },
-                    retry_transient=True,
-                )
-                results = research.get("results", [])
-                if len(results) < 2:
-                    raise RuntimeError(f"Research returned incomplete results: {research}")
-                launches_response = results[0].get("response", {})
-                finance_response = results[1].get("response", {})
-                if not all(response.get("successful") for response in (launches_response, finance_response)):
-                    raise RuntimeError(f"Exa research failed: {research}")
-                launches = launches_response.get("data", {})
-                finance = finance_response.get("data", {})
-                launches_answer = launches.get("answer", "")
-                finance_answer = finance.get("answer", "")
-                launches_answer = select_new_news_answer(launches_answer, news_history, "AI Developments")
-                launch_entries = extract_news_entries(launches_answer)
-                finance_answer = select_new_news_answer(finance_answer, news_history + launch_entries, "AI Finance")
-                launches_text = parse_news_json(launches_answer, "AI Developments", window_start_dt, window_end_dt)
-                finance_text = parse_news_json(finance_answer, "AI Finance", window_start_dt, window_end_dt)
-                finance_entries = extract_news_entries(finance_answer)
-                validate_new_news(launch_entries, news_history, "AI Developments")
-                validate_new_news(finance_entries, news_history + launch_entries, "AI Finance")
+                    }
+                for research_attempt in range(1, MCP_MAX_ATTEMPTS + 1):
+                    research = await meta_call(
+                        mcp,
+                        "COMPOSIO_MULTI_EXECUTE_TOOL",
+                        research_arguments,
+                        retry_transient=True,
+                    )
+                    try:
+                        (
+                            launches,
+                            finance,
+                            launches_text,
+                            finance_text,
+                            launch_entries,
+                            finance_entries,
+                        ) = prepare_research_payload(
+                            research,
+                            news_history,
+                            window_start_dt,
+                            window_end_dt,
+                        )
+                        break
+                    except RuntimeError as exc:
+                        if "fewer than three new" not in str(exc) or research_attempt == MCP_MAX_ATTEMPTS:
+                            raise
+                        print(f"[Exa] research attempt {research_attempt}/{MCP_MAX_ATTEMPTS} lacked three new stories")
+                        print(f"[Exa] retrying in {MCP_RETRY_DELAY_SECONDS} seconds")
+                        await asyncio.sleep(MCP_RETRY_DELAY_SECONDS)
                 stock_rows = await fetch_finnhub_stock_rows(finnhub_api_key)
                 stock_html = stock_table_html(stock_rows)
                 stock_markdown = stock_table_markdown(stock_rows)
