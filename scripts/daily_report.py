@@ -57,6 +57,7 @@ EMAIL_ATTEMPT_TIMEOUT_SECONDS = 180
 EMAIL_RETRY_DELAY_SECONDS = 150
 NEWS_HISTORY_PATH = Path(os.environ.get("NEWS_HISTORY_PATH", ".cache/news_history.json"))
 MAX_NEWS_HISTORY_ENTRIES = 240
+MAX_PUBLICATION_FUTURE_SKEW = timedelta(minutes=10)
 
 
 def result_text(result: Any) -> str:
@@ -188,7 +189,7 @@ def parse_news_json(answer: str, block_name: str, start: datetime, end: datetime
         if published_dt.tzinfo is None:
             published_dt = published_dt.replace(tzinfo=timezone.utc)
         published_dt = published_dt.astimezone(timezone.utc)
-        if not start <= published_dt <= end:
+        if not start <= published_dt <= end + MAX_PUBLICATION_FUTURE_SKEW:
             raise RuntimeError(f"Exa returned a {block_name} story outside the last-72-hour window: {published_at}")
         if not re.match(r"^https?://", source_url):
             raise RuntimeError(f"Exa returned an invalid original source URL for {block_name}: {source_url}")
@@ -433,9 +434,9 @@ async def send_email_with_retries(
 
 
 async def run() -> None:
-    now = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
-    window_start_dt = now.astimezone(timezone.utc).replace(microsecond=0) - timedelta(hours=72)
-    window_end_dt = now.astimezone(timezone.utc).replace(microsecond=0)
+    now = datetime.now(LOCAL_TZ).replace(microsecond=0)
+    window_start_dt = (now - timedelta(hours=72)).astimezone(timezone.utc)
+    window_end_dt = now.astimezone(timezone.utc)
     window_start = window_start_dt.isoformat().replace("+00:00", "Z")
     window_end = window_end_dt.isoformat().replace("+00:00", "Z")
 
@@ -516,12 +517,12 @@ async def run() -> None:
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about new artificial intelligence launches, new AI developments, or new AI capabilities. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"why it matters in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                             tool_call("EXA_ANSWER", exa_account, {
                                     "model": "exa-pro",
                                     "text": False,
-                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
+                                    "query": f"Using only Exa, identify exactly three of the most relevant international news stories published between {window_start} and {window_end} UTC about AI finance: investments, acquisitions, funding rounds, valuations, earnings, partnerships with material financial impact, or AI business strategy. The current time is {window_end} UTC ({now:%Y-%m-%d %H:%M} America/Mexico_City); do not return future publication timestamps, except up to 10 minutes for clock skew. Use original English-language headlines and prioritize original English-language American or other authoritative sources. {history_instruction} Return ONLY valid JSON, with no Markdown fences or commentary, in exactly this shape: {{\"stories\":[{{\"title\":\"...\",\"published_at\":\"YYYY-MM-DDTHH:MM:SSZ\",\"summary\":\"2-3 factual sentences in English\",\"relevance\":\"financial relevance in English\",\"source_url\":\"https://original-source...\"}}]}}. Every published_at must be the verified publication timestamp of that specific article, every source_url must be the direct original English-language article URL, and every story must be inside this exact 72-hour window. Exclude duplicates. If fewer than three qualifying stories exist, return {{\"stories\":[]}}.",
                             }),
                         ],
                     },
