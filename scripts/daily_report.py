@@ -259,7 +259,7 @@ def stock_table_markdown(rows: list[list[str]]) -> str:
 
 async def fetch_finnhub_stock_rows(api_key: str) -> list[list[str]]:
     """Fetch the latest price and daily change for the configured AI leaders."""
-    rows = [["Company", "Ticker", "Current price", "Daily change", "Daily change %", "Currency", "Market date/time"]]
+    rows = [["Company", "Ticker", "Yesterday price", "Today's price", "Change %", "Market time"]]
     async with httpx2.AsyncClient(timeout=20.0) as client:
         for company, ticker in TOP_AI_STOCKS:
             response = await client.get(
@@ -272,14 +272,15 @@ async def fetch_finnhub_stock_rows(api_key: str) -> list[list[str]]:
             required = (quote.get("c"), quote.get("d"), quote.get("dp"), quote.get("t"))
             if any(value is None for value in required):
                 raise RuntimeError(f"Finnhub returned incomplete quote data for {ticker}: missing price or daily change")
+            today_price = float(quote["c"])
+            yesterday_price = today_price - float(quote["d"])
             updated = datetime.fromtimestamp(int(quote["t"]), timezone.utc)
             rows.append([
                 company,
                 ticker,
-                f"${float(quote['c']):,.2f}",
-                f"{float(quote['d']):+,.2f}",
+                f"${yesterday_price:,.2f}",
+                f"${today_price:,.2f}",
                 f"{float(quote['dp']):+,.2f}%",
-                "USD",
                 f"{updated:%Y-%m-%d %H:%M UTC}",
             ])
     return rows
@@ -476,15 +477,26 @@ async def run() -> None:
                     if item.get("url")
                 )
 
-                title = f"Most relevant IA NEWS — {now:%Y-%m-%d}"
+                title = f"IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}"
                 markdown = (
-                    "# Most relevant IA NEWS\n\n"
+                    f"# IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}\n\n"
+                    "> 🟣 **AI DAILY BRIEF**\n"
+                    "> Market intelligence, AI developments and financial signals\n\n"
                     f"_Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico._\n\n"
-                    "## **AI Developments**\n\n"
+                    "---\n\n"
+                    "## Section 1 — AI developments\n\n"
+                    "> 🟣 **Top signal**\n"
+                    "> The most relevant AI product, model or capability developments from the last 72 hours.\n\n"
                     f"{launches_text}\n\n"
-                    "## **AI Finance**\n\n"
+                    "---\n\n"
+                    "## Section 2 — AI finance\n\n"
+                    "> 🟣 **Top financial signal**\n"
+                    "> The most relevant AI investments, acquisitions, earnings and business strategy signals.\n\n"
                     f"{finance_text}\n\n"
-                    "## **AI Leaders Stock Prices**\n\n"
+                    "---\n\n"
+                    "## Section 3 — AI leaders stock prices (USD)\n\n"
+                    "> 🟣 **Market snapshot**\n"
+                    "> Daily movement for the selected AI leaders, with prices shown in USD.\n\n"
                     f"{stock_markdown}\n\n"
                     "Source: [Finnhub Quote API](https://finnhub.io/docs/api/quote)\n\n"
                     "### Sources searched through Exa\n\n"
@@ -516,27 +528,31 @@ async def run() -> None:
                 page_url = page_url or "(URL unavailable)"
 
                 email_body = (
-                    "Most relevant IA NEWS\n\n"
+                    f"IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}\n\n"
+                    "🟣 AI DAILY BRIEF\n"
                     f"Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico.\n\n"
-                    f"Full report in Notion: {page_url}\n\n"
-                    "**BLOCK 1 — AI DEVELOPMENTS**\n\n"
+                    f"Open full report in Notion: {page_url}\n\n"
+                    "SECTION 1 — AI DEVELOPMENTS\n\n"
                     f"{launches_text}\n\n"
-                    "**BLOCK 2 — AI FINANCE**\n\n"
+                    "SECTION 2 — AI FINANCE\n\n"
                     f"{finance_text}\n\n"
-                    "**BLOCK 3 — AI LEADERS STOCK PRICES**\n\n"
+                    "SECTION 3 — AI LEADERS STOCK PRICES (USD)\n\n"
                     "See the formatted table below.\n\n"
                     "Sources searched through Exa:\n"
                     f"{citation_lines}"
                 )
                 email_body_html = (
-                    "<h1>Most relevant IA NEWS</h1>"
+                    '<div style="border-left:6px solid #6C4AB6;padding:18px 22px;background:#F3EEFF;margin-bottom:20px">'
+                    f"<h1 style=\"color:#3D2673;margin:0 0 8px\">IA daily report for Rogelio Espinosa — {now:%Y-%m-%d}</h1>"
+                    '<p style="margin:0;color:#6C4AB6;font-weight:bold;letter-spacing:.08em">AI DAILY BRIEF</p>'
+                    "</div>"
                     f"<p>Report generated on {now:%Y-%m-%d} at {now:%H:%M} in Monterrey, Nuevo León, Mexico.</p>"
-                    f'<p><strong><a href="{html.escape(page_url)}">Full report in Notion</a></strong></p>'
-                    "<h2><strong>BLOCK 1 — AI DEVELOPMENTS</strong></h2>"
+                    f'<p><strong>🔗 <a href="{html.escape(page_url)}">Open full report in Notion</a></strong></p>'
+                    '<div style="border-left:6px solid #6C4AB6;padding:10px 16px;background:#F3EEFF;margin-top:20px"><h2 style="color:#3D2673;margin:0">Section 1 — AI developments</h2><p style="margin:6px 0 0;color:#6C4AB6"><strong>Top signal</strong></p></div>'
                     f"<p>{html_fragment(launches_text)}</p>"
-                    "<h2><strong>BLOCK 2 — AI FINANCE</strong></h2>"
+                    '<div style="border-left:6px solid #6C4AB6;padding:10px 16px;background:#F3EEFF;margin-top:20px"><h2 style="color:#3D2673;margin:0">Section 2 — AI finance</h2><p style="margin:6px 0 0;color:#6C4AB6"><strong>Top financial signal</strong></p></div>'
                     f"<p>{html_fragment(finance_text)}</p>"
-                    "<h2><strong>BLOCK 3 — AI LEADERS STOCK PRICES</strong></h2>"
+                    '<div style="border-left:6px solid #6C4AB6;padding:10px 16px;background:#F3EEFF;margin-top:20px"><h2 style="color:#3D2673;margin:0">Section 3 — AI leaders stock prices (USD)</h2><p style="margin:6px 0 0;color:#6C4AB6"><strong>Market snapshot</strong></p></div>'
                     f"{stock_html}"
                     '<p>Source: <a href="https://finnhub.io/docs/api/quote">Finnhub Quote API</a></p>'
                     "<p><strong>Sources searched through Exa:</strong><br>"

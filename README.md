@@ -5,11 +5,11 @@ Usa exclusivamente Exa para investigar noticias de inteligencia artificial de la
 
 El envío por Gmail tiene hasta 5 intentos. Cada intento espera como máximo 3 minutos y, si falla, espera 2 minutos y 30 segundos antes de reintentarlo. La página de Notion se crea una sola vez, antes de iniciar los reintentos de correo.
 
-The report is titled `Most relevant IA NEWS` and contains three blocks. News must be published within the exact last 72 hours:
+The report is titled `IA daily report for Rogelio Espinosa — YYYY-MM-DD` and uses a purple AI DAILY BRIEF layout with three sections. News must be published within the exact last 72 hours:
 
-- `AI Developments`: three stories about new AI launches, developments, or capabilities.
-- `AI Finance`: three stories about AI investments, acquisitions, valuations, earnings, or financial strategy.
-- `AI Leaders Stock Prices`: a table with current price, daily change, market date, and source for ten companies: NVDA, MSFT, GOOGL, AMZN, META, AVGO, AMD, ORCL, PLTR, and TSM.
+- `Section 1 — AI developments`: three stories about new AI launches, developments, or capabilities.
+- `Section 2 — AI finance`: three stories about AI investments, acquisitions, valuations, earnings, or financial strategy.
+- `Section 3 — AI leaders stock prices (USD)`: a table with company, ticker, yesterday price, today's price, change percentage, and market time for ten companies: NVDA, MSFT, GOOGL, AMZN, META, AVGO, AMD, ORCL, PLTR, and TSM.
 
 Headlines and summaries are written in English, prioritizing original English-language sources. Each story must end with a link to its original source.
 
